@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<title>Go Nuts!</title>
+<style>
+  :root {
+    --bg1: #ff006e;
+    --bg2: #fb5607;
+    --bg3: #ffbe0b;
+    --bg4: #8338ec;
+    --bg5: #3a86ff;
+    --ink: #1a1a2e;
+    --paper: #fffaf0;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    font-family: 'Comic Sans MS', 'Chalkboard SE', system-ui, sans-serif;
+    color: var(--ink);
+    user-select: none;
+  }
+  body {
+    background: linear-gradient(135deg, var(--bg1), var(--bg2), var(--bg3), var(--bg4), var(--bg5));
+    background-size: 400% 400%;
+    animation: shift 16s ease infinite;
+    touch-action: manipulation;
+  }
+  @keyframes shift {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+  .screen {
+    position: absolute; inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    text-align: center;
+  }
+  .screen.active { display: flex; }
+  h1 {
+    font-size: clamp(48px, 12vw, 140px);
+    margin: 0 0 10px;
+    color: var(--paper);
+    text-shadow:
+      4px 4px 0 var(--ink),
+      -2px -2px 0 #fff,
+      0 0 30px rgba(255,255,255,0.6);
+    letter-spacing: 2px;
+    transform: rotate(-3deg);
+    animation: wobble 2s ease-in-out infinite;
+  }
+  @keyframes wobble {
+    0%, 100% { transform: rotate(-3deg) scale(1); }
+    25%      { transform: rotate(2deg) scale(1.04); }
+    50%      { transform: rotate(-2deg) scale(0.98); }
+    75%      { transform: rotate(4deg) scale(1.03); }
+  }
+  .subtitle {
+    font-size: clamp(18px, 3.5vw, 28px);
+    color: var(--paper);
+    margin-bottom: 30px;
+    text-shadow: 2px 2px 0 var(--ink);
+  }
+  button, .btn {
+    font-family: inherit;
+    font-size: clamp(20px, 4vw, 28px);
+    padding: 16px 32px;
+    border: 4px solid var(--ink);
+    border-radius: 22px;
+    background: var(--paper);
+    color: var(--ink);
+    cursor: pointer;
+    box-shadow: 6px 6px 0 var(--ink);
+    transition: transform 0.08s ease, box-shadow 0.08s ease;
+    margin: 8px;
+    font-weight: bold;
+  }
+  button:active, .btn:active {
+    transform: translate(4px, 4px);
+    box-shadow: 2px 2px 0 var(--ink);
+  }
+  button.primary { background: #ffeb3b; }
+  button.danger  { background: #ff5252; color: #fff; }
+  button.go {
+    font-size: clamp(28px, 6vw, 48px);
+    padding: 24px 48px;
+    background: #00e676;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.06); }
+  }
+  input {
+    font-family: inherit;
+    font-size: clamp(18px, 4vw, 24px);
+    padding: 12px 18px;
+    border: 4px solid var(--ink);
+    border-radius: 18px;
+    width: min(80vw, 360px);
+    background: var(--paper);
+    color: var(--ink);
+    outline: none;
+  }
+  input:focus { box-shadow: 0 0 0 4px #ffeb3b; }
+
+  .panel {
+    background: rgba(255, 250, 240, 0.92);
+    border: 5px solid var(--ink);
+    border-radius: 28px;
+    padding: 24px;
+    max-width: min(92vw, 520px);
+    width: 100%;
+    box-shadow: 8px 8px 0 var(--ink);
+  }
+  .row { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; }
+
+  .player-list { list-style: none; padding: 0; margin: 16px 0; }
+  .player-list li {
+    background: #fff;
+    border: 3px solid var(--ink);
+    border-radius: 14px;
+    padding: 10px 14px;
+    margin: 8px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 20px;
+    font-weight: bold;
+  }
+  .pill {
+    background: var(--bg4);
+    color: #fff;
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 16px;
+  }
+  .x-btn {
+    background: #ff5252; color: #fff; border: 2px solid var(--ink);
+    border-radius: 50%; width: 32px; height: 32px;
+    font-size: 18px; padding: 0; line-height: 1; box-shadow: 2px 2px 0 var(--ink);
+  }
+
+  /* TIMER SCREEN */
+  #timer-screen .now-up {
+    font-size: clamp(28px, 6vw, 48px);
+    color: var(--paper);
+    text-shadow: 3px 3px 0 var(--ink);
+    margin-bottom: 10px;
+  }
+  #timer-screen .name {
+    font-size: clamp(40px, 10vw, 80px);
+    color: #ffeb3b;
+    text-shadow: 4px 4px 0 var(--ink);
+    margin: 0 0 20px;
+    transform: rotate(-2deg);
+  }
+  .ring-wrap {
+    position: relative;
+    width: min(70vw, 360px);
+    aspect-ratio: 1;
+    margin: 16px auto;
+  }
+  .ring-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring-bg { fill: none; stroke: rgba(255,255,255,0.3); stroke-width: 14; }
+  .ring-fg { fill: none; stroke: #ffeb3b; stroke-width: 14; stroke-linecap: round;
+             transition: stroke-dashoffset 1s linear, stroke 0.4s ease; }
+  .ring-num {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: clamp(60px, 18vw, 140px);
+    color: #fff; font-weight: bold;
+    text-shadow: 4px 4px 0 var(--ink);
+  }
+  .crazy-word {
+    font-size: clamp(24px, 5vw, 40px);
+    color: var(--paper);
+    text-shadow: 3px 3px 0 var(--ink);
+    margin-top: 10px;
+    min-height: 1.4em;
+    animation: spinword 0.6s ease;
+  }
+  @keyframes spinword {
+    from { transform: scale(0.4) rotate(-30deg); opacity: 0; }
+    to   { transform: scale(1) rotate(0); opacity: 1; }
+  }
+
+  /* RATING SCREEN */
+  .rating-title {
+    font-size: clamp(24px, 5vw, 38px);
+    color: var(--paper);
+    text-shadow: 3px 3px 0 var(--ink);
+    margin: 0 0 4px;
+  }
+  .rating-name {
+    font-size: clamp(36px, 9vw, 70px);
+    color: #ffeb3b;
+    text-shadow: 4px 4px 0 var(--ink);
+    margin: 0 0 16px;
+    transform: rotate(-2deg);
+  }
+  .stars { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 16px 0; }
+  .star {
+    font-size: clamp(36px, 9vw, 64px);
+    cursor: pointer;
+    background: none; border: none; padding: 4px;
+    filter: grayscale(1) brightness(1.4);
+    transition: transform 0.15s ease, filter 0.2s ease;
+    box-shadow: none;
+  }
+  .star.active { filter: none; transform: scale(1.15); }
+  .star:active { transform: scale(0.9); }
+  .rater {
+    font-size: clamp(16px, 3vw, 22px);
+    color: var(--paper);
+    text-shadow: 2px 2px 0 var(--ink);
+    margin-bottom: 8px;
+  }
+
+  /* WINNER SCREEN */
+  #winner-screen .crown {
+    font-size: clamp(80px, 20vw, 180px);
+    animation: bounce 1s ease-in-out infinite;
+  }
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0) rotate(-5deg); }
+    50%      { transform: translateY(-20px) rotate(5deg); }
+  }
+  .winner-name {
+    font-size: clamp(48px, 12vw, 120px);
+    color: #ffeb3b;
+    text-shadow:
+      5px 5px 0 var(--ink),
+      0 0 40px #fff;
+    margin: 10px 0;
+    transform: rotate(-3deg);
+    animation: wobble 1.2s ease-in-out infinite;
+  }
+  .winner-score {
+    font-size: clamp(28px, 6vw, 48px);
+    color: var(--paper);
+    text-shadow: 3px 3px 0 var(--ink);
+  }
+  .scoreboard {
+    margin-top: 20px;
+    background: rgba(255, 250, 240, 0.92);
+    border: 5px solid var(--ink);
+    border-radius: 24px;
+    padding: 16px 20px;
+    box-shadow: 8px 8px 0 var(--ink);
+    max-width: min(92vw, 460px);
+    width: 100%;
+  }
+  .scoreboard h3 { margin: 0 0 10px; font-size: 22px; }
+  .scoreboard ol { padding-left: 28px; margin: 0; text-align: left; }
+  .scoreboard li { font-size: 20px; padding: 4px 0; font-weight: bold; }
+
+  /* CONFETTI */
+  canvas#confetti {
+    position: fixed; inset: 0; pointer-events: none; z-index: 999;
+  }
+
+  /* GET READY OVERLAY */
+  #ready-overlay {
+    position: fixed; inset: 0;
+    display: none;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.5);
+    z-index: 50;
+  }
+  #ready-overlay.active { display: flex; }
+  #ready-num {
+    font-size: clamp(120px, 30vw, 280px);
+    color: #ffeb3b;
+    text-shadow: 6px 6px 0 var(--ink);
+    animation: pop 1s ease forwards;
+  }
+  @keyframes pop {
+    0%   { transform: scale(0.2) rotate(-180deg); opacity: 0; }
+    50%  { transform: scale(1.3) rotate(10deg); opacity: 1; }
+    100% { transform: scale(1) rotate(0); opacity: 1; }
+  }
+
+  .small { font-size: 14px; opacity: 0.9; }
+  .footer-btn { position: fixed; top: 12px; left: 12px; z-index: 10;
+                font-size: 16px; padding: 8px 14px; box-shadow: 3px 3px 0 var(--ink); }
+</style>
+</head>
+<body>
+
+<canvas id="confetti"></canvas>
+
+<!-- SETUP -->
+<section id="setup-screen" class="screen active">
+  <h1>Go Nuts!</h1>
+  <div class="subtitle">The craziest player wins.</div>
+  <div class="panel">
+    <div class="row">
+      <input id="name-input" placeholder="Player name" maxlength="14" autocomplete="off" />
+      <button id="add-btn" class="primary">+ Add</button>
+    </div>
+    <ul id="player-list" class="player-list"></ul>
+    <button id="start-btn" class="go" disabled>START!</button>
+    <div class="small">Add at least 2 players</div>
+  </div>
+</section>
+
+<!-- TURN INTRO -->
+<section id="intro-screen" class="screen">
+  <div class="now-up">Next up...</div>
+  <h2 class="name" id="intro-name">—</h2>
+  <div class="subtitle">Get ready to GO NUTS for 30 seconds!</div>
+  <button id="begin-turn-btn" class="go">I'M READY!</button>
+</section>
+
+<!-- TIMER -->
+<section id="timer-screen" class="screen">
+  <div class="now-up">Now going nuts:</div>
+  <h2 class="name" id="timer-name">—</h2>
+  <div class="ring-wrap">
+    <svg viewBox="0 0 200 200">
+      <circle class="ring-bg" cx="100" cy="100" r="90"></circle>
+      <circle class="ring-fg" id="ring-fg" cx="100" cy="100" r="90"
+              stroke-dasharray="565.48" stroke-dashoffset="0"></circle>
+    </svg>
+    <div class="ring-num" id="ring-num">30</div>
+  </div>
+  <div class="crazy-word" id="crazy-word">LET'S GO!</div>
+  <button id="stop-btn" class="danger">Stop</button>
+</section>
+
+<!-- RATING -->
+<section id="rating-screen" class="screen">
+  <div class="rating-title">How crazy was</div>
+  <h2 class="rating-name" id="rate-name">—</h2>
+  <div class="rater" id="rater-label">Rater 1 of 1</div>
+  <div class="panel">
+    <div class="stars" id="stars"></div>
+    <div id="rating-word" class="subtitle" style="margin-bottom:10px;min-height:1.4em;">Tap a star!</div>
+    <button id="submit-rating-btn" class="primary" disabled>Submit Rating</button>
+  </div>
+</section>
+
+<!-- WINNER -->
+<section id="winner-screen" class="screen">
+  <div class="crown">👑</div>
+  <div class="subtitle">CRAZIEST OF THEM ALL</div>
+  <h2 class="winner-name" id="winner-name">—</h2>
+  <div class="winner-score" id="winner-score">— stars</div>
+  <div class="scoreboard">
+    <h3>🏆 Final Scores</h3>
+    <ol id="final-scores"></ol>
+  </div>
+  <div class="row" style="margin-top:20px;">
+    <button id="play-again-btn" class="primary">Play Again (Same Crew)</button>
+    <button id="new-game-btn">New Game</button>
+  </div>
+</section>
+
+<button id="reset-btn" class="footer-btn">↺ Reset</button>
+
+<!-- READY OVERLAY -->
+<div id="ready-overlay"><div id="ready-num">3</div></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const screens = ['setup', 'intro', 'timer', 'rating', 'winner'];
+  const show = (name) => {
+    screens.forEach(s => $(s + '-screen').classList.toggle('active', s === name));
+  };
+
+  const CRAZY_WORDS = [
+    "WIGGLE!", "FLAIL!", "SPIN!", "WOBBLE!", "BOUNCE!",
+    "JIGGLE!", "ZOOM!", "FLOP!", "TWIRL!", "SHIMMY!",
+    "HOP!", "ROAR!", "WHIRL!", "SHAKE!", "DANCE!",
+    "JUMP!", "STOMP!", "FLUTTER!", "WIGGLE!", "BOOGIE!"
+  ];
+  const RATING_WORDS = [
+    "Mildly silly 😐",
+    "Pretty wacky 🙃",
+    "Super zany! 😜",
+    "Bonkers!! 🤪",
+    "ABSOLUTELY BANANAS!!! 🍌🤯"
+  ];
+
+  const state = {
+    players: [],          // [{name, scores: [], total: 0}]
+    turnIndex: 0,
+    raterQueue: [],       // names left to rate the current player
+    currentRating: 0,
+    timer: null,
+    wordTimer: null,
+    timeLeft: 30,
+  };
+
+  // ---------- SETUP ----------
+  const nameInput = $('name-input');
+  const addBtn = $('add-btn');
+  const playerList = $('player-list');
+  const startBtn = $('start-btn');
+
+  function renderPlayers() {
+    playerList.innerHTML = '';
+    state.players.forEach((p, i) => {
+      const li = document.createElement('li');
+      li.innerHTML = `<span>${escapeHtml(p.name)}</span>`;
+      const x = document.createElement('button');
+      x.className = 'x-btn';
+      x.textContent = '×';
+      x.onclick = () => { state.players.splice(i, 1); renderPlayers(); };
+      li.appendChild(x);
+      playerList.appendChild(li);
+    });
+    startBtn.disabled = state.players.length < 2;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  function addPlayer() {
+    const name = nameInput.value.trim();
+    if (!name) return;
+    if (state.players.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+      nameInput.value = '';
+      return;
+    }
+    state.players.push({ name, scores: [], total: 0 });
+    nameInput.value = '';
+    renderPlayers();
+    nameInput.focus();
+  }
+
+  addBtn.onclick = addPlayer;
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addPlayer();
+  });
+
+  startBtn.onclick = () => {
+    state.turnIndex = 0;
+    state.players.forEach(p => { p.scores = []; p.total = 0; });
+    showIntro();
+  };
+
+  // ---------- INTRO ----------
+  function showIntro() {
+    if (state.turnIndex >= state.players.length) {
+      showWinner();
+      return;
+    }
+    $('intro-name').textContent = state.players[state.turnIndex].name;
+    show('intro');
+  }
+
+  $('begin-turn-btn').onclick = () => {
+    runReadyCountdown(() => startTimer());
+  };
+
+  function runReadyCountdown(onDone) {
+    const overlay = $('ready-overlay');
+    const num = $('ready-num');
+    const seq = ['3', '2', '1', 'GO NUTS!'];
+    let i = 0;
+    overlay.classList.add('active');
+    const step = () => {
+      if (i >= seq.length) {
+        overlay.classList.remove('active');
+        onDone();
+        return;
+      }
+      num.textContent = seq[i];
+      num.style.animation = 'none';
+      void num.offsetWidth;
+      num.style.animation = '';
+      i++;
+      setTimeout(step, 700);
+    };
+    step();
+  }
+
+  // ---------- TIMER ----------
+  const RING_CIRC = 2 * Math.PI * 90; // ~565.48
+  $('ring-fg').setAttribute('stroke-dasharray', RING_CIRC);
+
+  function startTimer() {
+    show('timer');
+    $('timer-name').textContent = state.players[state.turnIndex].name;
+    state.timeLeft = 30;
+    updateRing();
+    cycleWord();
+    state.timer = setInterval(tick, 1000);
+    state.wordTimer = setInterval(cycleWord, 900);
+  }
+
+  function tick() {
+    state.timeLeft--;
+    updateRing();
+    if (state.timeLeft <= 0) {
+      stopTimer();
+      goToRating();
+    }
+  }
+
+  function updateRing() {
+    $('ring-num').textContent = Math.max(0, state.timeLeft);
+    const pct = state.timeLeft / 30;
+    const offset = RING_CIRC * (1 - pct);
+    const ring = $('ring-fg');
+    ring.setAttribute('stroke-dashoffset', offset);
+    if (state.timeLeft <= 5) ring.style.stroke = '#ff5252';
+    else if (state.timeLeft <= 15) ring.style.stroke = '#fb8c00';
+    else ring.style.stroke = '#ffeb3b';
+  }
+
+  function cycleWord() {
+    const w = CRAZY_WORDS[Math.floor(Math.random() * CRAZY_WORDS.length)];
+    const el = $('crazy-word');
+    el.textContent = w;
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = 'spinword 0.6s ease';
+  }
+
+  function stopTimer() {
+    clearInterval(state.timer);
+    clearInterval(state.wordTimer);
+    state.timer = state.wordTimer = null;
+  }
+
+  $('stop-btn').onclick = () => {
+    stopTimer();
+    goToRating();
+  };
+
+  // ---------- RATING ----------
+  function goToRating() {
+    const current = state.players[state.turnIndex];
+    state.raterQueue = state.players
+      .map(p => p.name)
+      .filter(n => n !== current.name);
+    nextRater();
+  }
+
+  function nextRater() {
+    if (state.raterQueue.length === 0) {
+      // done rating this player
+      state.turnIndex++;
+      showIntro();
+      return;
+    }
+    const current = state.players[state.turnIndex];
+    const rater = state.raterQueue[0];
+    $('rate-name').textContent = current.name;
+    const total = state.players.length - 1;
+    const idx = total - state.raterQueue.length + 1;
+    $('rater-label').textContent = `${rater}, you rate (${idx} of ${total})`;
+    state.currentRating = 0;
+    renderStars();
+    $('rating-word').textContent = 'Tap a star!';
+    $('submit-rating-btn').disabled = true;
+    show('rating');
+  }
+
+  function renderStars() {
+    const wrap = $('stars');
+    wrap.innerHTML = '';
+    for (let i = 1; i <= 5; i++) {
+      const b = document.createElement('button');
+      b.className = 'star' + (i <= state.currentRating ? ' active' : '');
+      b.textContent = '⭐';
+      b.onclick = () => {
+        state.currentRating = i;
+        renderStars();
+        $('rating-word').textContent = RATING_WORDS[i - 1];
+        $('submit-rating-btn').disabled = false;
+      };
+      wrap.appendChild(b);
+    }
+  }
+
+  $('submit-rating-btn').onclick = () => {
+    if (!state.currentRating) return;
+    const current = state.players[state.turnIndex];
+    current.scores.push(state.currentRating);
+    state.raterQueue.shift();
+    nextRater();
+  };
+
+  // ---------- WINNER ----------
+  function showWinner() {
+    state.players.forEach(p => {
+      p.total = p.scores.reduce((a, b) => a + b, 0);
+    });
+    const sorted = [...state.players].sort((a, b) => b.total - a.total);
+    const winner = sorted[0];
+    $('winner-name').textContent = winner.name;
+    const avg = winner.scores.length ? (winner.total / winner.scores.length).toFixed(1) : '0';
+    $('winner-score').textContent = `${winner.total} ⭐ (avg ${avg})`;
+    const ol = $('final-scores');
+    ol.innerHTML = '';
+    sorted.forEach(p => {
+      const li = document.createElement('li');
+      const a = p.scores.length ? (p.total / p.scores.length).toFixed(1) : '0';
+      li.textContent = `${p.name} — ${p.total} ⭐ (avg ${a})`;
+      ol.appendChild(li);
+    });
+    show('winner');
+    burstConfetti();
+  }
+
+  $('play-again-btn').onclick = () => {
+    state.turnIndex = 0;
+    state.players.forEach(p => { p.scores = []; p.total = 0; });
+    showIntro();
+  };
+  $('new-game-btn').onclick = () => {
+    state.players = [];
+    renderPlayers();
+    show('setup');
+  };
+
+  $('reset-btn').onclick = () => {
+    if (confirm('Reset everything and start over?')) {
+      stopTimer();
+      state.players = [];
+      renderPlayers();
+      show('setup');
+    }
+  };
+
+  // ---------- CONFETTI ----------
+  const canvas = $('confetti');
+  const ctx = canvas.getContext('2d');
+  let confetti = [];
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function burstConfetti() {
+    const colors = ['#ff006e','#fb5607','#ffbe0b','#8338ec','#3a86ff','#00e676','#ffeb3b'];
+    for (let i = 0; i < 220; i++) {
+      confetti.push({
+        x: Math.random() * canvas.width,
+        y: -20 - Math.random() * canvas.height * 0.5,
+        vx: (Math.random() - 0.5) * 6,
+        vy: 2 + Math.random() * 4,
+        size: 6 + Math.random() * 8,
+        rot: Math.random() * Math.PI * 2,
+        vr: (Math.random() - 0.5) * 0.3,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        life: 300 + Math.random() * 200,
+      });
+    }
+  }
+  function loopConfetti() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    confetti = confetti.filter(p => p.life > 0 && p.y < canvas.height + 30);
+    confetti.forEach(p => {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.08;
+      p.rot += p.vr;
+      p.life--;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+      ctx.restore();
+    });
+    requestAnimationFrame(loopConfetti);
+  }
+  loopConfetti();
+
+  renderPlayers();
+})();
+</script>
+</body>
+</html>
