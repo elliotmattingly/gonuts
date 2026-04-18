@@ -36,12 +36,17 @@
     position: absolute; inset: 0;
     display: none;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
+    align-items: safe center;
+    justify-content: safe center;
+    padding: 60px 20px 20px;
     text-align: center;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
   .screen.active { display: flex; }
+  .screen > * { flex-shrink: 0; }
   h1 {
     font-size: clamp(48px, 12vw, 140px);
     margin: 0 0 10px;
