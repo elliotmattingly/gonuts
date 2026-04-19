@@ -319,7 +319,7 @@
 <section id="intro-screen" class="screen">
   <div class="now-up">Next up...</div>
   <h2 class="name" id="intro-name">—</h2>
-  <div class="subtitle">Get ready to GO NUTS for 30 seconds!</div>
+  <div class="subtitle">Get ready to GO NUTS for 15 seconds!</div>
   <button id="begin-turn-btn" class="go">I'M READY!</button>
 </section>
 
@@ -333,7 +333,7 @@
       <circle class="ring-fg" id="ring-fg" cx="100" cy="100" r="90"
               stroke-dasharray="565.48" stroke-dashoffset="0"></circle>
     </svg>
-    <div class="ring-num" id="ring-num">30</div>
+    <div class="ring-num" id="ring-num">15</div>
   </div>
   <div class="crazy-word" id="crazy-word">LET'S GO!</div>
   <button id="stop-btn" class="danger">Stop</button>
@@ -401,7 +401,7 @@
     currentRating: 0,
     timer: null,
     wordTimer: null,
-    timeLeft: 30,
+    timeLeft: 15,
   };
 
   // ---------- SETUP ----------
@@ -498,7 +498,7 @@
   function startTimer() {
     show('timer');
     $('timer-name').textContent = state.players[state.turnIndex].name;
-    state.timeLeft = 30;
+    state.timeLeft = 15;
     updateRing();
     cycleWord();
     state.timer = setInterval(tick, 1000);
@@ -516,12 +516,12 @@
 
   function updateRing() {
     $('ring-num').textContent = Math.max(0, state.timeLeft);
-    const pct = state.timeLeft / 30;
+    const pct = state.timeLeft / 15;
     const offset = RING_CIRC * (1 - pct);
     const ring = $('ring-fg');
     ring.setAttribute('stroke-dashoffset', offset);
-    if (state.timeLeft <= 5) ring.style.stroke = '#ff5252';
-    else if (state.timeLeft <= 15) ring.style.stroke = '#fb8c00';
+    if (state.timeLeft <= 3) ring.style.stroke = '#ff5252';
+    else if (state.timeLeft <= 8) ring.style.stroke = '#fb8c00';
     else ring.style.stroke = '#ffeb3b';
   }
 
