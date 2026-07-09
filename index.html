@@ -294,6 +294,11 @@
   .small { font-size: 14px; opacity: 0.9; }
   .footer-btn { position: fixed; top: 12px; left: 12px; z-index: 10;
                 font-size: 16px; padding: 8px 14px; box-shadow: 3px 3px 0 var(--ink); }
+
+  /* TEST MODE (?test=1): kill animations/transitions so Playwright gets stable boxes */
+  .test *, .test *::before, .test *::after {
+    animation: none !important; transition: none !important;
+  }
 </style>
 </head>
 <body>
@@ -319,7 +324,7 @@
 <section id="intro-screen" class="screen">
   <div class="now-up">Next up...</div>
   <h2 class="name" id="intro-name">—</h2>
-  <div class="subtitle">Get ready to GO NUTS for 15 seconds!</div>
+  <div class="subtitle">Get ready to GO NUTS for <span id="intro-secs">…</span> seconds!</div>
   <button id="begin-turn-btn" class="go">I'M READY!</button>
 </section>
 
@@ -333,7 +338,7 @@
       <circle class="ring-fg" id="ring-fg" cx="100" cy="100" r="90"
               stroke-dasharray="565.48" stroke-dashoffset="0"></circle>
     </svg>
-    <div class="ring-num" id="ring-num">15</div>
+    <div class="ring-num" id="ring-num">—</div>
   </div>
   <div class="crazy-word" id="crazy-word">LET'S GO!</div>
   <button id="stop-btn" class="danger">Stop</button>
@@ -374,12 +379,68 @@
 
 <script>
 (() => {
-  const $ = (id) => document.getElementById(id);
-  const screens = ['setup', 'intro', 'timer', 'rating', 'winner'];
-  const show = (name) => {
-    screens.forEach(s => $(s + '-screen').classList.toggle('active', s === name));
-  };
+  // ---------- CONFIG ----------
+  const CONFIG = Object.freeze({
+    TURN_SECONDS_DEFAULT: 15,
+    TURN_CHOICES:   [10, 15, 30],          // Phase 3 settings UI
+    ROUND_CHOICES:  [1, 2, 3],
+    NUTOFF_SECONDS: 10,                    // sudden-death turns are shorter
+    COUNTDOWN_STEPS: ['3', '2', '1', 'GO NUTS!'],
+    COUNTDOWN_STEP_MS: 700,
+    WORD_CYCLE_MS:  900,
+    REPAINT_MS:     200,                   // ring repaint cadence — cosmetic only, never counts time
+    URGENT_AT_S:    3,                     // ring red + urgency cues
+    WARN_AT_S:      8,                     // ring orange
+    MIN_PLAYERS:    2,
+    MAX_NAME_LEN:   14,
+    SKIPS_PER_PLAYER: 1,                   // Phase 3 prompt skips
+    RESUME_MAX_AGE_MS: 12 * 3600 * 1000,   // saves older than 12h are silently discarded
+    HOF_MAX_ENTRIES: 20,
+    RING_CIRC: 2 * Math.PI * 90,
+  });
 
+  const KEYS = Object.freeze({             // unversioned key names; each payload carries a `v` field
+    game:     'gonuts.game',
+    settings: 'gonuts.settings',
+    hof:      'gonuts.hof',
+    decks:    'gonuts.decks',              // Phase 4
+  });
+
+  // ---- test flags (parsed once; read only via accessors; never persisted) ----
+  const qp = new URLSearchParams(location.search);
+  const TEST = qp.has('test');             // ?test=1 → deterministic fast mode
+  if (TEST) document.documentElement.classList.add('test');
+  const TEST_TURN = TEST ? Math.max(1, +qp.get('t') || 0) : 0;      // &t=2 → 2s turns
+  const TEST_FAST = TEST && qp.has('fast');                          // &fast=1 → 60ms countdown steps
+  const TEST_SEED = TEST ? (+qp.get('seed') || 0) : 0;               // &seed=42 → deterministic shuffle
+
+  // Accessors — the ONLY way timing values are read:
+  function countdownStepMs() { return TEST_FAST ? 60 : CONFIG.COUNTDOWN_STEP_MS; }
+  function wordCycleMs()     { return TEST_FAST ? 150 : CONFIG.WORD_CYCLE_MS; }
+  function turnSecondsForCurrentTurn() {
+    if (TEST_TURN) return TEST_TURN;
+    const g = typeof game === 'undefined' ? null : game;  // `game` lands with the game model (Phase 1 step 6)
+    if (g?.tiebreak) return Math.min(CONFIG.NUTOFF_SECONDS, g.settings.turnSeconds);
+    return g?.settings.turnSeconds ?? settings.turnSeconds;
+  }
+
+  // ---------- UTIL ----------
+  const $ = (id) => document.getElementById(id);
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  function restartAnim(el) {               // retrigger a CSS animation via forced reflow
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = '';
+  }
+  // shuffle()/mulberry32()/range() land with the game model (Phase 1 step 6).
+
+  // ---------- COPY & DECKS ----------
   const CRAZY_WORDS = [
     "WIGGLE!", "FLAIL!", "SPIN!", "WOBBLE!", "BOUNCE!",
     "JIGGLE!", "ZOOM!", "FLOP!", "TWIRL!", "SHIMMY!",
@@ -393,7 +454,40 @@
     "Bonkers!! 🤪",
     "ABSOLUTELY BANANAS!!! 🍌🤯"
   ];
+  // DECKS (prompt decks) land in Phase 3.
 
+  // ---------- STORE ----------
+  const store = {
+    get(k)    { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+    del(k)    { try { localStorage.removeItem(k); } catch {} },
+  };
+
+  // ---------- SETTINGS ----------
+  const DEFAULT_SETTINGS = {
+    v: 1,
+    turnSeconds: CONFIG.TURN_SECONDS_DEFAULT,   // one of CONFIG.TURN_CHOICES
+    rounds: 1,                                  // one of CONFIG.ROUND_CHOICES
+    sound: true,
+    haptics: true,
+    deckId: 'classic',                          // key into the deck registry (custom ids in Phase 4)
+  };
+  let settings = Object.assign({}, DEFAULT_SETTINGS, store.get(KEYS.settings) || {});
+  function setSetting(k, v) { settings[k] = v; store.set(KEYS.settings, settings); }
+
+  // ---------- AUDIO & HAPTICS ----------
+  // Stubs — Phase 2 replaces these wholesale with the WebAudio engine (DESIGN.md §6).
+  const audio = { play() {}, unlock() {} };
+  const haptics = { buzz() {} };
+
+  // ---------- WAKE LOCK ----------
+  // Placeholder — the wakeLock module lands in Phase 1 step 8 (DESIGN.md §3).
+
+  // ---------- TIMERS ----------
+  // Placeholder — the timers registry lands in Phase 1 step 3 (DESIGN.md §2).
+
+  // ---------- GAME MODEL ----------
+  // Placeholder — Phase 1 step 6 replaces `state` with the id-keyed game + turn log (DESIGN.md §7).
   const state = {
     players: [],          // [{name, scores: [], total: 0}]
     turnIndex: 0,
@@ -401,10 +495,19 @@
     currentRating: 0,
     timer: null,
     wordTimer: null,
-    timeLeft: 15,
+    timeLeft: 0,
   };
 
-  // ---------- SETUP ----------
+  // ---------- MACHINE ----------
+  // Placeholder — STATES/machine/transition() land in Phase 1 step 3 (DESIGN.md §2);
+  // show() then becomes private to transition().
+  const screens = ['setup', 'intro', 'timer', 'rating', 'winner'];
+  const show = (name) => {
+    screens.forEach(s => $(s + '-screen').classList.toggle('active', s === name));
+  };
+
+  // ---------- SCREENS ----------
+  // -- setup --
   const nameInput = $('name-input');
   const addBtn = $('add-btn');
   const playerList = $('player-list');
@@ -425,12 +528,6 @@
     startBtn.disabled = state.players.length < 2;
   }
 
-  function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, c => ({
-      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-    }[c]));
-  }
-
   function addPlayer() {
     const name = nameInput.value.trim();
     if (!name) return;
@@ -444,35 +541,22 @@
     nameInput.focus();
   }
 
-  addBtn.onclick = addPlayer;
-  nameInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') addPlayer();
-  });
-
-  startBtn.onclick = () => {
-    state.turnIndex = 0;
-    state.players.forEach(p => { p.scores = []; p.total = 0; });
-    showIntro();
-  };
-
-  // ---------- INTRO ----------
+  // -- intro --
   function showIntro() {
     if (state.turnIndex >= state.players.length) {
       showWinner();
       return;
     }
     $('intro-name').textContent = state.players[state.turnIndex].name;
+    $('intro-secs').textContent = turnSecondsForCurrentTurn();
     show('intro');
   }
 
-  $('begin-turn-btn').onclick = () => {
-    runReadyCountdown(() => startTimer());
-  };
-
+  // -- countdown --
   function runReadyCountdown(onDone) {
     const overlay = $('ready-overlay');
     const num = $('ready-num');
-    const seq = ['3', '2', '1', 'GO NUTS!'];
+    const seq = CONFIG.COUNTDOWN_STEPS;
     let i = 0;
     overlay.classList.add('active');
     const step = () => {
@@ -482,27 +566,22 @@
         return;
       }
       num.textContent = seq[i];
-      num.style.animation = 'none';
-      void num.offsetWidth;
-      num.style.animation = '';
+      restartAnim(num);
       i++;
-      setTimeout(step, 700);
+      setTimeout(step, countdownStepMs()); /* raw-timer-ok: moves onto the timers registry in Phase 1 step 3 */
     };
     step();
   }
 
-  // ---------- TIMER ----------
-  const RING_CIRC = 2 * Math.PI * 90; // ~565.48
-  $('ring-fg').setAttribute('stroke-dasharray', RING_CIRC);
-
+  // -- performing (timer) --
   function startTimer() {
     show('timer');
     $('timer-name').textContent = state.players[state.turnIndex].name;
-    state.timeLeft = 15;
+    state.timeLeft = turnSecondsForCurrentTurn();
     updateRing();
     cycleWord();
-    state.timer = setInterval(tick, 1000);
-    state.wordTimer = setInterval(cycleWord, 900);
+    state.timer = setInterval(tick, 1000); /* raw-timer-ok: moves onto the timers registry in Phase 1 step 3 */
+    state.wordTimer = setInterval(cycleWord, wordCycleMs()); /* raw-timer-ok: moves onto the timers registry in Phase 1 step 3 */
   }
 
   function tick() {
@@ -516,12 +595,12 @@
 
   function updateRing() {
     $('ring-num').textContent = Math.max(0, state.timeLeft);
-    const pct = state.timeLeft / 15;
-    const offset = RING_CIRC * (1 - pct);
+    const pct = state.timeLeft / turnSecondsForCurrentTurn();
+    const offset = CONFIG.RING_CIRC * (1 - pct);
     const ring = $('ring-fg');
     ring.setAttribute('stroke-dashoffset', offset);
-    if (state.timeLeft <= 3) ring.style.stroke = '#ff5252';
-    else if (state.timeLeft <= 8) ring.style.stroke = '#fb8c00';
+    if (state.timeLeft <= CONFIG.URGENT_AT_S) ring.style.stroke = '#ff5252';
+    else if (state.timeLeft <= CONFIG.WARN_AT_S) ring.style.stroke = '#fb8c00';
     else ring.style.stroke = '#ffeb3b';
   }
 
@@ -529,9 +608,7 @@
     const w = CRAZY_WORDS[Math.floor(Math.random() * CRAZY_WORDS.length)];
     const el = $('crazy-word');
     el.textContent = w;
-    el.style.animation = 'none';
-    void el.offsetWidth;
-    el.style.animation = 'spinword 0.6s ease';
+    restartAnim(el);
   }
 
   function stopTimer() {
@@ -540,12 +617,7 @@
     state.timer = state.wordTimer = null;
   }
 
-  $('stop-btn').onclick = () => {
-    stopTimer();
-    goToRating();
-  };
-
-  // ---------- RATING ----------
+  // -- rating --
   function goToRating() {
     const current = state.players[state.turnIndex];
     state.raterQueue = state.players
@@ -591,15 +663,7 @@
     }
   }
 
-  $('submit-rating-btn').onclick = () => {
-    if (!state.currentRating) return;
-    const current = state.players[state.turnIndex];
-    current.scores.push(state.currentRating);
-    state.raterQueue.shift();
-    nextRater();
-  };
-
-  // ---------- WINNER ----------
+  // -- winner --
   function showWinner() {
     state.players.forEach(p => {
       p.total = p.scores.reduce((a, b) => a + b, 0);
@@ -621,11 +685,41 @@
     burstConfetti();
   }
 
+  // ---------- WIRING ----------
+  addBtn.onclick = addPlayer;
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addPlayer();
+  });
+
+  startBtn.onclick = () => {
+    state.turnIndex = 0;
+    state.players.forEach(p => { p.scores = []; p.total = 0; });
+    showIntro();
+  };
+
+  $('begin-turn-btn').onclick = () => {
+    runReadyCountdown(() => startTimer());
+  };
+
+  $('stop-btn').onclick = () => {
+    stopTimer();
+    goToRating();
+  };
+
+  $('submit-rating-btn').onclick = () => {
+    if (!state.currentRating) return;
+    const current = state.players[state.turnIndex];
+    current.scores.push(state.currentRating);
+    state.raterQueue.shift();
+    nextRater();
+  };
+
   $('play-again-btn').onclick = () => {
     state.turnIndex = 0;
     state.players.forEach(p => { p.scores = []; p.total = 0; });
     showIntro();
   };
+
   $('new-game-btn').onclick = () => {
     state.players = [];
     renderPlayers();
@@ -640,6 +734,9 @@
       show('setup');
     }
   };
+
+  // ---------- PERSISTENCE ----------
+  // Placeholder — saveGame/loadSnapshot/resumeGame + the resume banner land in Phase 1 step 7 (DESIGN.md §4).
 
   // ---------- CONFETTI ----------
   const canvas = $('confetti');
@@ -684,10 +781,13 @@
       ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
       ctx.restore();
     });
-    requestAnimationFrame(loopConfetti);
+    requestAnimationFrame(loopConfetti); /* raw-timer-ok: rafLoop lifecycle lands in Phase 1 step 8 */
   }
   loopConfetti();
 
+  // ---------- SW REGISTRATION + BOOT ----------
+  // SW registration lands in Phase 2 (skipped under TEST and on file://).
+  $('ring-fg').setAttribute('stroke-dasharray', CONFIG.RING_CIRC);
   renderPlayers();
 })();
 </script>
