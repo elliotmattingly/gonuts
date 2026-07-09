@@ -270,15 +270,8 @@
     position: fixed; inset: 0; pointer-events: none; z-index: 999;
   }
 
-  /* GET READY OVERLAY */
-  #ready-overlay {
-    position: fixed; inset: 0;
-    display: none;
-    align-items: center; justify-content: center;
-    background: rgba(0,0,0,0.5);
-    z-index: 50;
-  }
-  #ready-overlay.active { display: flex; }
+  /* COUNTDOWN SCREEN (the old ready overlay, promoted to a real screen) */
+  #countdown-screen { background: rgba(0,0,0,0.5); }
   #ready-num {
     font-size: clamp(120px, 30vw, 280px);
     color: #ffeb3b;
@@ -328,6 +321,11 @@
   <button id="begin-turn-btn" class="go">I'M READY!</button>
 </section>
 
+<!-- COUNTDOWN -->
+<section id="countdown-screen" class="screen">
+  <div id="ready-num">3</div>
+</section>
+
 <!-- TIMER -->
 <section id="timer-screen" class="screen">
   <div class="now-up">Now going nuts:</div>
@@ -374,9 +372,6 @@
 
 <button id="reset-btn" class="footer-btn">↺ Reset</button>
 
-<!-- READY OVERLAY -->
-<div id="ready-overlay"><div id="ready-num">3</div></div>
-
 <script>
 (() => {
   // ---------- CONFIG ----------
@@ -419,9 +414,8 @@
   function wordCycleMs()     { return TEST_FAST ? 150 : CONFIG.WORD_CYCLE_MS; }
   function turnSecondsForCurrentTurn() {
     if (TEST_TURN) return TEST_TURN;
-    const g = typeof game === 'undefined' ? null : game;  // `game` lands with the game model (Phase 1 step 6)
-    if (g?.tiebreak) return Math.min(CONFIG.NUTOFF_SECONDS, g.settings.turnSeconds);
-    return g?.settings.turnSeconds ?? settings.turnSeconds;
+    if (game?.tiebreak) return Math.min(CONFIG.NUTOFF_SECONDS, game.settings.turnSeconds);
+    return game?.settings.turnSeconds ?? settings.turnSeconds;
   }
 
   // ---------- UTIL ----------
@@ -484,27 +478,90 @@
   // Placeholder — the wakeLock module lands in Phase 1 step 8 (DESIGN.md §3).
 
   // ---------- TIMERS ----------
-  // Placeholder — the timers registry lands in Phase 1 step 3 (DESIGN.md §2).
+  // The ONLY way timers/rAF/transient listeners are created (DESIGN.md §2).
+  // transition() clears the registry before entering any state, so nothing survives navigation.
+  const timers = (() => {
+    let handles = [];                        // [kind, handle] kind: 't'|'i'|'r'|'l'
+    return {
+      after(ms, fn)  { const h = setTimeout(fn, ms);  /* raw-timer-ok */ handles.push(['t', h]); return h; },
+      every(ms, fn)  { const h = setInterval(fn, ms); /* raw-timer-ok */ handles.push(['i', h]); return h; },
+      rafLoop(fn)    {                       // self-rescheduling: runs fn(t) each frame until fn returns false
+        const slot = ['r', 0];
+        const loop = (t) => { if (fn(t) !== false) slot[1] = requestAnimationFrame(loop); /* raw-timer-ok */ };
+        slot[1] = requestAnimationFrame(loop); /* raw-timer-ok */
+        handles.push(slot);
+      },
+      listen(target, ev, fn, opts) {         // transient listeners are timer-class resources
+        target.addEventListener(ev, fn, opts);
+        handles.push(['l', () => target.removeEventListener(ev, fn, opts)]);
+      },
+      clearAll() {
+        for (const [k, h] of handles) {
+          if (k === 't') clearTimeout(h);
+          else if (k === 'i') clearInterval(h);
+          else if (k === 'r') cancelAnimationFrame(h);
+          else h();
+        }
+        handles = [];
+      },
+      count() { return handles.length; },    // exposed to tests via __gonuts
+    };
+  })();
 
   // ---------- GAME MODEL ----------
-  // Placeholder — Phase 1 step 6 replaces `state` with the id-keyed game + turn log (DESIGN.md §7).
+  // Placeholder model — Phase 1 step 6 replaces `state` with the id-keyed game + turn log (DESIGN.md §7).
+  let game = null;        // populated by newGame() from Phase 1 step 6
   const state = {
     players: [],          // [{name, scores: [], total: 0}]
     turnIndex: 0,
     raterQueue: [],       // names left to rate the current player
     currentRating: 0,
-    timer: null,
-    wordTimer: null,
-    timeLeft: 0,
+    timeLeft: 0,          // still tick-based; wall-clock `run` object lands in Phase 1 step 5
   };
 
+  function currentPlayer() {               // step 6 re-derives this from game.order
+    return state.players[state.turnIndex] || null;
+  }
+
+  function openRating() {                  // data op: build the rater queue for the current turn
+    const current = currentPlayer();
+    state.raterQueue = state.players
+      .map(p => p.name)
+      .filter(n => n !== current.name);
+  }
+
   // ---------- MACHINE ----------
-  // Placeholder — STATES/machine/transition() land in Phase 1 step 3 (DESIGN.md §2);
-  // show() then becomes private to transition().
-  const screens = ['setup', 'intro', 'timer', 'rating', 'winner'];
-  const show = (name) => {
-    screens.forEach(s => $(s + '-screen').classList.toggle('active', s === name));
+  const STATES = {
+    // Phase 1 ships these six rows; Phase 3 ADDS pass/roundEnd/nutoff rows and widens `to` lists.
+    setup:      { screen: 'setup',     to: ['intro'],                              enter: enterSetup },
+    intro:      { screen: 'intro',     to: ['countdown', 'setup'],                 enter: enterIntro },
+    countdown:  { screen: 'countdown', to: ['performing', 'setup'],                enter: enterCountdown,  resume: 'intro' },
+    performing: { screen: 'timer',     to: ['rating', 'setup'],                    enter: enterPerforming, resume: 'intro' },
+    rating:     { screen: 'rating',    to: ['rating', 'intro', 'winner', 'setup'], enter: enterRating },
+    winner:     { screen: 'winner',    to: ['intro', 'setup'],                     enter: enterWinner },
   };
+  const machine = { state: null };         // null = boot; transitions from boot are always legal (resume targets)
+
+  function transition(to, payload = {}) {
+    const from = machine.state;
+    if (from && !STATES[from].to.includes(to)) {
+      console.warn(`[fsm] blocked ${from} -> ${to}`);
+      return false;                        // guarded no-op — this is what makes double-fires harmless
+    }
+    timers.clearAll();                     // no timer/listener/rAF survives a transition
+    // wakeLock.sync(to) rides here from Phase 1 step 8 (DESIGN.md §3).
+    machine.state = to;
+    show(STATES[to].screen);               // the ONLY call site of show()
+    STATES[to].enter(payload);
+    // saveGame() rides here from Phase 1 step 7 (DESIGN.md §4).
+    return true;
+  }
+
+  function show(name) {                    // PRIVATE to transition(): dumb DOM toggler
+    document.body.dataset.state = machine.state;
+    document.querySelectorAll('.screen').forEach(el =>
+      el.classList.toggle('active', el.id === `${name}-screen`));
+  }
 
   // ---------- SCREENS ----------
   // -- setup --
@@ -541,56 +598,55 @@
     nameInput.focus();
   }
 
+  function enterSetup() {
+    renderPlayers();
+  }
+
   // -- intro --
-  function showIntro() {
-    if (state.turnIndex >= state.players.length) {
-      showWinner();
-      return;
-    }
-    $('intro-name').textContent = state.players[state.turnIndex].name;
+  function enterIntro() {
+    const p = currentPlayer();
+    if (!p) return transition('setup');
+    $('intro-name').textContent = p.name;
     $('intro-secs').textContent = turnSecondsForCurrentTurn();
-    show('intro');
   }
 
   // -- countdown --
-  function runReadyCountdown(onDone) {
-    const overlay = $('ready-overlay');
-    const num = $('ready-num');
-    const seq = CONFIG.COUNTDOWN_STEPS;
+  function enterCountdown() {
+    if (!currentPlayer()) return transition('setup');
     let i = 0;
-    overlay.classList.add('active');
     const step = () => {
-      if (i >= seq.length) {
-        overlay.classList.remove('active');
-        onDone();
-        return;
-      }
-      num.textContent = seq[i];
+      if (i >= CONFIG.COUNTDOWN_STEPS.length) return transition('performing');
+      const num = $('ready-num');
+      num.textContent = CONFIG.COUNTDOWN_STEPS[i];
       restartAnim(num);
+      audio.play(i < 3 ? 'tick' : 'go'); haptics.buzz(i < 3 ? 30 : [60, 40, 60]);
       i++;
-      setTimeout(step, countdownStepMs()); /* raw-timer-ok: moves onto the timers registry in Phase 1 step 3 */
+      timers.after(countdownStepMs(), step);
     };
     step();
   }
 
   // -- performing (timer) --
-  function startTimer() {
-    show('timer');
-    $('timer-name').textContent = state.players[state.turnIndex].name;
+  function enterPerforming() {
+    const p = currentPlayer();
+    if (!p) return transition('setup');
+    $('timer-name').textContent = p.name;
     state.timeLeft = turnSecondsForCurrentTurn();
     updateRing();
     cycleWord();
-    state.timer = setInterval(tick, 1000); /* raw-timer-ok: moves onto the timers registry in Phase 1 step 3 */
-    state.wordTimer = setInterval(cycleWord, wordCycleMs()); /* raw-timer-ok: moves onto the timers registry in Phase 1 step 3 */
+    timers.every(1000, tick);              // still tick-based; wall-clock lands in Phase 1 step 5
+    timers.every(wordCycleMs(), cycleWord);
   }
 
   function tick() {
     state.timeLeft--;
     updateRing();
-    if (state.timeLeft <= 0) {
-      stopTimer();
-      goToRating();
-    }
+    if (state.timeLeft <= 0) endTurn();
+  }
+
+  function endTurn() {                     // also the Stop button handler body
+    openRating();
+    transition('rating');
   }
 
   function updateRing() {
@@ -611,29 +667,10 @@
     restartAnim(el);
   }
 
-  function stopTimer() {
-    clearInterval(state.timer);
-    clearInterval(state.wordTimer);
-    state.timer = state.wordTimer = null;
-  }
-
   // -- rating --
-  function goToRating() {
-    const current = state.players[state.turnIndex];
-    state.raterQueue = state.players
-      .map(p => p.name)
-      .filter(n => n !== current.name);
-    nextRater();
-  }
-
-  function nextRater() {
-    if (state.raterQueue.length === 0) {
-      // done rating this player
-      state.turnIndex++;
-      showIntro();
-      return;
-    }
-    const current = state.players[state.turnIndex];
+  function enterRating() {
+    const current = currentPlayer();
+    if (!current || !state.raterQueue.length) return transition('setup');
     const rater = state.raterQueue[0];
     $('rate-name').textContent = current.name;
     const total = state.players.length - 1;
@@ -643,7 +680,6 @@
     renderStars();
     $('rating-word').textContent = 'Tap a star!';
     $('submit-rating-btn').disabled = true;
-    show('rating');
   }
 
   function renderStars() {
@@ -664,7 +700,8 @@
   }
 
   // -- winner --
-  function showWinner() {
+  function enterWinner() {
+    // Name-keyed totals + sorted[0] die in Phase 1 step 6 (computeWinners/getResults).
     state.players.forEach(p => {
       p.total = p.scores.reduce((a, b) => a + b, 0);
     });
@@ -681,11 +718,11 @@
       li.textContent = `${p.name} — ${p.total} ⭐ (avg ${a})`;
       ol.appendChild(li);
     });
-    show('winner');
     burstConfetti();
   }
 
   // ---------- WIRING ----------
+  // Every handler = optional data mutation + one transition() call (DESIGN.md §2).
   addBtn.onclick = addPlayer;
   nameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') addPlayer();
@@ -694,44 +731,41 @@
   startBtn.onclick = () => {
     state.turnIndex = 0;
     state.players.forEach(p => { p.scores = []; p.total = 0; });
-    showIntro();
+    transition('intro');
   };
 
-  $('begin-turn-btn').onclick = () => {
-    runReadyCountdown(() => startTimer());
-  };
+  $('begin-turn-btn').onclick = () => transition('countdown');
 
-  $('stop-btn').onclick = () => {
-    stopTimer();
-    goToRating();
-  };
+  $('stop-btn').onclick = endTurn;
 
   $('submit-rating-btn').onclick = () => {
     if (!state.currentRating) return;
-    const current = state.players[state.turnIndex];
-    current.scores.push(state.currentRating);
+    currentPlayer().scores.push(state.currentRating);
     state.raterQueue.shift();
-    nextRater();
+    if (state.raterQueue.length) return transition('rating');
+    state.turnIndex++;                     // the advance() router consolidates this in Phase 1 step 6
+    transition(currentPlayer() ? 'intro' : 'winner');
   };
 
   $('play-again-btn').onclick = () => {
     state.turnIndex = 0;
     state.players.forEach(p => { p.scores = []; p.total = 0; });
-    showIntro();
+    transition('intro');
   };
 
   $('new-game-btn').onclick = () => {
     state.players = [];
-    renderPlayers();
-    show('setup');
+    transition('setup');
   };
 
   $('reset-btn').onclick = () => {
     if (confirm('Reset everything and start over?')) {
-      stopTimer();
       state.players = [];
-      renderPlayers();
-      show('setup');
+      state.turnIndex = 0;
+      state.raterQueue = [];
+      state.currentRating = 0;
+      renderPlayers();                     // setup→setup is not an edge, so re-render here too
+      transition('setup');
     }
   };
 
@@ -788,7 +822,8 @@
   // ---------- SW REGISTRATION + BOOT ----------
   // SW registration lands in Phase 2 (skipped under TEST and on file://).
   $('ring-fg').setAttribute('stroke-dasharray', CONFIG.RING_CIRC);
-  renderPlayers();
+  transition('setup');                     // boot always lands on setup (machine.state null → always legal)
+  if (TEST) window.__gonuts = { machine, timers, transition, getGame: () => game, settings, CONFIG };
 })();
 </script>
 </body>
