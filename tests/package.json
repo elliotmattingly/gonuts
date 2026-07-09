@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "test": "node smoke.cjs"
+  },
+  "devDependencies": {
+    "playwright": "~1.49"
+  }
+}
