@@ -174,7 +174,7 @@
   .ring-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
   .ring-bg { fill: none; stroke: rgba(255,255,255,0.3); stroke-width: 14; }
   .ring-fg { fill: none; stroke: #ffeb3b; stroke-width: 14; stroke-linecap: round;
-             transition: stroke-dashoffset 1s linear, stroke 0.4s ease; }
+             transition: stroke-dashoffset 0.2s linear, stroke 0.4s ease; }
   .ring-num {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
@@ -357,7 +357,7 @@
 <!-- WINNER -->
 <section id="winner-screen" class="screen">
   <div class="crown">👑</div>
-  <div class="subtitle">CRAZIEST OF THEM ALL</div>
+  <div class="subtitle" id="winner-subtitle">CRAZIEST OF THEM ALL</div>
   <h2 class="winner-name" id="winner-name">—</h2>
   <div class="winner-score" id="winner-score">— stars</div>
   <div class="scoreboard">
@@ -432,7 +432,22 @@
     void el.offsetWidth;
     el.style.animation = '';
   }
-  // shuffle()/mulberry32()/range() land with the game model (Phase 1 step 6).
+
+  function mulberry32(seed) {              // deterministic PRNG — parked here for Phase 3's seeded shuffle
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function shuffle(arr) {                  // Phase 1: identity copy; Phase 3: Fisher-Yates (mulberry32-seeded under TEST)
+    return arr.slice();
+  }
+
+  function range(n) { return Array.from({ length: n }, (_, i) => i); }
 
   // ---------- COPY & DECKS ----------
   const CRAZY_WORDS = [
@@ -509,25 +524,103 @@
   })();
 
   // ---------- GAME MODEL ----------
-  // Placeholder model — Phase 1 step 6 replaces `state` with the id-keyed game + turn log (DESIGN.md §7).
-  let game = null;        // populated by newGame() from Phase 1 step 6
-  const state = {
-    players: [],          // [{name, scores: [], total: 0}]
-    turnIndex: 0,
-    raterQueue: [],       // names left to rate the current player
-    currentRating: 0,
-    timeLeft: 0,          // still tick-based; wall-clock `run` object lands in Phase 1 step 5
-  };
+  // Pure data + pure functions + the advance() router (DESIGN.md §7). No DOM access.
+  // Scores are NEVER stored — always derived from the append-only `turns` log.
+  let game = null;
+  let roster = [];                         // setup-screen names; newGame() consumes a copy
 
-  function currentPlayer() {               // step 6 re-derives this from game.order
-    return state.players[state.turnIndex] || null;
+  function newGame(playerNames) {
+    const players = playerNames.map((name, i) => ({ id: 'p' + (i + 1), name }));
+    return {
+      v: 1,                                             // 2 from Phase 3
+      settings: Object.freeze({ ...settings }),          // frozen snapshot (DESIGN.md §5)
+      players,                                           // stable ids for the whole game; never key by name
+      order: shuffle(players.map(p => p.id)),            // Phase 1: shuffle() is identity; Phase 3: Fisher-Yates
+      round: 1,
+      turnIdx: 0,                                        // index into order (or tiebreak.order during NUT-OFF)
+      raterQueue: [],                                    // player ids left to rate the current turn
+      turns: [],                                         // append-only log — the ONLY source of scoring truth
+        // entry: { performerId:'p2', round:1, nutoff:false, promptIdx:null, ratings:{ p1:4, p3:5 } }
+      // Phase 3 fields (drawPile/currentPromptIdx/skipsUsed/tiebreak) land with the v2 schema.
+      hofRecorded: false,
+    };
   }
 
-  function openRating() {                  // data op: build the rater queue for the current turn
-    const current = currentPlayer();
-    state.raterQueue = state.players
-      .map(p => p.name)
-      .filter(n => n !== current.name);
+  function currentPerformerId() {
+    if (!game) return null;
+    return game.tiebreak ? game.tiebreak.order[game.tiebreak.turnIdx] : game.order[game.turnIdx];
+  }
+
+  function currentPlayer() {
+    const id = currentPerformerId();
+    return game?.players.find(p => p.id === id) || null;
+  }
+
+  function nameOf(id) {                    // id → display name (Phase 4 team mode extends this)
+    return game?.players.find(p => p.id === id)?.name ?? '?';
+  }
+
+  function getRaterIds(g, performerId) {   // Phase 1: everyone but the performer; P3 NUT-OFF: non-contenders; P4: non-teammates
+    return g.players.map(p => p.id).filter(id => id !== performerId);
+  }
+
+  function starsFor(turn) {
+    return Object.values(turn.ratings).reduce((a, b) => a + b, 0);
+  }
+
+  function totalsFor(g, { nutoffOnly = false } = {}) {   // main totals exclude NUT-OFF turns (DESIGN.md §7)
+    const totals = new Map(g.players.map(p => [p.id, { total: 0, turnCount: 0, avg: 0 }]));
+    const ratingCounts = new Map();                      // ratings received, for the per-rating average
+    for (const t of g.turns) {
+      if (!!t.nutoff !== nutoffOnly) continue;
+      const row = totals.get(t.performerId);
+      if (!row) continue;
+      row.total += starsFor(t);
+      row.turnCount++;
+      ratingCounts.set(t.performerId, (ratingCounts.get(t.performerId) || 0) + Object.keys(t.ratings).length);
+    }
+    for (const [id, row] of totals) {
+      const n = ratingCounts.get(id) || 0;
+      row.avg = n ? row.total / n : 0;
+    }
+    return totals;
+  }
+
+  function computeWinners(g, opts) {       // ALWAYS an array — ties are explicit, never sorted[0]
+    const totals = totalsFor(g, opts);
+    const max = Math.max(...[...totals.values()].map(r => r.total));
+    return g.players.map(p => p.id).filter(id => totals.get(id).total === max);
+  }
+
+  function getResults(g) {                 // view-model for the winner screen, scoreboards, HOF, share card
+    const totals = totalsFor(g);
+    const rows = g.players
+      .map(p => ({ id: p.id, name: p.name, ...totals.get(p.id) }))
+      .sort((a, b) => b.total - a.total);
+    const winners = computeWinners(g).map(id => rows.find(r => r.id === id));
+    return { winners, rows, superlatives: [], coWinners: winners.length > 1 };
+  }
+
+  function hasPrivateRating() {            // flips to true in Phase 3 (pass-the-phone private rating)
+    return false;
+  }
+
+  function openRating() {                  // data op: log the turn entry + build the rater queue
+    const g = game;
+    const performerId = currentPerformerId();
+    g.turns.push({ performerId, round: g.round, nutoff: !!g.tiebreak, promptIdx: null, ratings: {} });
+    g.raterQueue = getRaterIds(g, performerId);
+  }
+
+  function advance() {                     // the single flow router — called after each recorded rating
+    const g = game;
+    if (g.raterQueue.length) return transition(hasPrivateRating() ? 'pass' : 'rating');
+    // Phase 3: tiebreak (NUT-OFF) turn stepping rides here.
+    g.turnIdx++;
+    if (g.turnIdx < g.order.length) return transition('intro');
+    // Phase 3: multi-round (roundEnd) and NUT-OFF tie routing ride here; Phase 1 renders
+    // ties as co-winners directly in enterWinner via getResults().coWinners.
+    return transition('winner');
   }
 
   // ---------- MACHINE ----------
@@ -572,27 +665,27 @@
 
   function renderPlayers() {
     playerList.innerHTML = '';
-    state.players.forEach((p, i) => {
+    roster.forEach((name, i) => {
       const li = document.createElement('li');
-      li.innerHTML = `<span>${escapeHtml(p.name)}</span>`;
+      li.innerHTML = `<span>${escapeHtml(name)}</span>`;
       const x = document.createElement('button');
       x.className = 'x-btn';
       x.textContent = '×';
-      x.onclick = () => { state.players.splice(i, 1); renderPlayers(); };
+      x.onclick = () => { roster.splice(i, 1); renderPlayers(); };
       li.appendChild(x);
       playerList.appendChild(li);
     });
-    startBtn.disabled = state.players.length < 2;
+    startBtn.disabled = roster.length < CONFIG.MIN_PLAYERS;
   }
 
   function addPlayer() {
     const name = nameInput.value.trim();
     if (!name) return;
-    if (state.players.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+    if (roster.some(n => n.toLowerCase() === name.toLowerCase())) {
       nameInput.value = '';
       return;
     }
-    state.players.push({ name, scores: [], total: 0 });
+    roster.push(name);
     nameInput.value = '';
     renderPlayers();
     nameInput.focus();
@@ -627,37 +720,43 @@
   }
 
   // -- performing (timer) --
+  // Truth is performance.now() vs run.turnEndsAt; the REPAINT_MS interval only repaints (DESIGN.md §3).
+  // Ephemeral runtime values live here — never in closures captured by listeners, never persisted.
+  const run = { turnEndsAt: 0, turnTotalMs: 0, lastWholeSecond: 0 };
+
   function enterPerforming() {
     const p = currentPlayer();
     if (!p) return transition('setup');
     $('timer-name').textContent = p.name;
-    state.timeLeft = turnSecondsForCurrentTurn();
-    updateRing();
-    cycleWord();
-    timers.every(1000, tick);              // still tick-based; wall-clock lands in Phase 1 step 5
+    renderPromptLine();                                     // no-op until Phase 3
+    run.turnTotalMs = turnSecondsForCurrentTurn() * 1000;
+    run.turnEndsAt  = performance.now() + run.turnTotalMs;
+    run.lastWholeSecond = turnSecondsForCurrentTurn() + 1;
+    repaintRing(); cycleWord();
+    timers.every(CONFIG.REPAINT_MS, repaintRing);
     timers.every(wordCycleMs(), cycleWord);
   }
 
-  function tick() {
-    state.timeLeft--;
-    updateRing();
-    if (state.timeLeft <= 0) endTurn();
+  function renderPromptLine() {}           // prompt deck lands in Phase 3 (DESIGN.md §7)
+
+  function repaintRing() {                 // replaces tick() + updateRing()
+    const msLeft = Math.max(0, run.turnEndsAt - performance.now());
+    const secs = Math.ceil(msLeft / 1000);
+    $('ring-num').textContent = secs;
+    const ring = $('ring-fg');
+    ring.setAttribute('stroke-dashoffset', CONFIG.RING_CIRC * (1 - msLeft / run.turnTotalMs));
+    ring.style.stroke = secs <= CONFIG.URGENT_AT_S ? '#ff5252' : secs <= CONFIG.WARN_AT_S ? '#fb8c00' : '#ffeb3b';
+    if (secs !== run.lastWholeSecond) {    // per-second edge — sound/haptic hook
+      run.lastWholeSecond = secs;
+      if (secs > 0 && secs <= CONFIG.URGENT_AT_S) { audio.play('urgent'); haptics.buzz(40); }
+    }
+    if (msLeft <= 0) { audio.play('buzzer'); haptics.buzz([80, 60, 80]); endTurn(); }
   }
 
   function endTurn() {                     // also the Stop button handler body
-    openRating();
-    transition('rating');
-  }
-
-  function updateRing() {
-    $('ring-num').textContent = Math.max(0, state.timeLeft);
-    const pct = state.timeLeft / turnSecondsForCurrentTurn();
-    const offset = CONFIG.RING_CIRC * (1 - pct);
-    const ring = $('ring-fg');
-    ring.setAttribute('stroke-dashoffset', offset);
-    if (state.timeLeft <= CONFIG.URGENT_AT_S) ring.style.stroke = '#ff5252';
-    else if (state.timeLeft <= CONFIG.WARN_AT_S) ring.style.stroke = '#fb8c00';
-    else ring.style.stroke = '#ffeb3b';
+    if (machine.state !== 'performing') return;   // a turn can only end once (key-repeat safe)
+    openRating();                          // logs the turn entry + builds raterQueue (DESIGN.md §7)
+    transition(hasPrivateRating() ? 'pass' : 'rating');
   }
 
   function cycleWord() {
@@ -668,15 +767,18 @@
   }
 
   // -- rating --
+  let currentRating = 0;                   // UI-only star selection — never persisted (DESIGN.md §4)
+
   function enterRating() {
-    const current = currentPlayer();
-    if (!current || !state.raterQueue.length) return transition('setup');
-    const rater = state.raterQueue[0];
-    $('rate-name').textContent = current.name;
-    const total = state.players.length - 1;
-    const idx = total - state.raterQueue.length + 1;
-    $('rater-label').textContent = `${rater}, you rate (${idx} of ${total})`;
-    state.currentRating = 0;
+    const g = game;
+    const performer = currentPlayer();
+    if (!g || !performer || !g.raterQueue.length) return transition('setup');
+    const raterId = g.raterQueue[0];
+    $('rate-name').textContent = performer.name;
+    const total = getRaterIds(g, performer.id).length;
+    const idx = total - g.raterQueue.length + 1;
+    $('rater-label').textContent = `${nameOf(raterId)}, you rate (${idx} of ${total})`;
+    currentRating = 0;
     renderStars();
     $('rating-word').textContent = 'Tap a star!';
     $('submit-rating-btn').disabled = true;
@@ -687,10 +789,10 @@
     wrap.innerHTML = '';
     for (let i = 1; i <= 5; i++) {
       const b = document.createElement('button');
-      b.className = 'star' + (i <= state.currentRating ? ' active' : '');
+      b.className = 'star' + (i <= currentRating ? ' active' : '');
       b.textContent = '⭐';
       b.onclick = () => {
-        state.currentRating = i;
+        currentRating = i;
         renderStars();
         $('rating-word').textContent = RATING_WORDS[i - 1];
         $('submit-rating-btn').disabled = false;
@@ -701,21 +803,19 @@
 
   // -- winner --
   function enterWinner() {
-    // Name-keyed totals + sorted[0] die in Phase 1 step 6 (computeWinners/getResults).
-    state.players.forEach(p => {
-      p.total = p.scores.reduce((a, b) => a + b, 0);
-    });
-    const sorted = [...state.players].sort((a, b) => b.total - a.total);
-    const winner = sorted[0];
-    $('winner-name').textContent = winner.name;
-    const avg = winner.scores.length ? (winner.total / winner.scores.length).toFixed(1) : '0';
-    $('winner-score').textContent = `${winner.total} ⭐ (avg ${avg})`;
+    if (!game) return transition('setup');
+    const res = getResults(game);          // renders EXCLUSIVELY from getResults() (DESIGN.md §8)
+    // Co-winner stopgap (bug (c)/R5): ties are celebrated, never resolved by sorted[0].
+    // Phase 3 routes most ties to the NUT-OFF; this rendering stays as its fallback.
+    $('winner-subtitle').textContent = res.coWinners ? 'CO-CRAZIEST OF THEM ALL' : 'CRAZIEST OF THEM ALL';
+    $('winner-name').textContent = res.winners.map(w => w.name).join(' & ');
+    const w = res.winners[0];
+    $('winner-score').textContent = `${w.total} ⭐ (avg ${w.avg.toFixed(1)})`;
     const ol = $('final-scores');
     ol.innerHTML = '';
-    sorted.forEach(p => {
+    res.rows.forEach(r => {
       const li = document.createElement('li');
-      const a = p.scores.length ? (p.total / p.scores.length).toFixed(1) : '0';
-      li.textContent = `${p.name} — ${p.total} ⭐ (avg ${a})`;
+      li.textContent = `${r.name} — ${r.total} ⭐ (avg ${r.avg.toFixed(1)})`;
       ol.appendChild(li);
     });
     burstConfetti();
@@ -729,8 +829,8 @@
   });
 
   startBtn.onclick = () => {
-    state.turnIndex = 0;
-    state.players.forEach(p => { p.scores = []; p.total = 0; });
+    if (roster.length < CONFIG.MIN_PLAYERS) return;
+    game = newGame(roster.slice());
     transition('intro');
   };
 
@@ -739,31 +839,27 @@
   $('stop-btn').onclick = endTurn;
 
   $('submit-rating-btn').onclick = () => {
-    if (!state.currentRating) return;
-    currentPlayer().scores.push(state.currentRating);
-    state.raterQueue.shift();
-    if (state.raterQueue.length) return transition('rating');
-    state.turnIndex++;                     // the advance() router consolidates this in Phase 1 step 6
-    transition(currentPlayer() ? 'intro' : 'winner');
+    if (!currentRating || !game?.raterQueue.length) return;
+    const raterId = game.raterQueue.shift();
+    game.turns.at(-1).ratings[raterId] = currentRating;
+    advance();
   };
 
-  $('play-again-btn').onclick = () => {
-    state.turnIndex = 0;
-    state.players.forEach(p => { p.scores = []; p.total = 0; });
+  $('play-again-btn').onclick = () => {    // fresh game, same crew (order reshuffles from Phase 3)
+    game = newGame(game.players.map(p => p.name));
     transition('intro');
   };
 
   $('new-game-btn').onclick = () => {
-    state.players = [];
+    game = null;
+    roster = [];
     transition('setup');
   };
 
   $('reset-btn').onclick = () => {
     if (confirm('Reset everything and start over?')) {
-      state.players = [];
-      state.turnIndex = 0;
-      state.raterQueue = [];
-      state.currentRating = 0;
+      game = null;
+      roster = [];
       renderPlayers();                     // setup→setup is not an edge, so re-render here too
       transition('setup');
     }
@@ -821,6 +917,11 @@
 
   // ---------- SW REGISTRATION + BOOT ----------
   // SW registration lands in Phase 2 (skipped under TEST and on file://).
+  // Registered ONCE at boot (never per-turn): reads run.turnEndsAt from module state, so a
+  // return from a hidden tab repaints honestly — and ends the turn if the deadline passed.
+  document.addEventListener('visibilitychange', () => { /* raw-timer-ok: permanent listener */
+    if (!document.hidden && machine.state === 'performing') repaintRing();
+  });
   $('ring-fg').setAttribute('stroke-dasharray', CONFIG.RING_CIRC);
   transition('setup');                     // boot always lands on setup (machine.state null → always legal)
   if (TEST) window.__gonuts = { machine, timers, transition, getGame: () => game, settings, CONFIG };
