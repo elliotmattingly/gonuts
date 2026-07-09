@@ -265,10 +265,34 @@
   .scoreboard ol { padding-left: 28px; margin: 0; text-align: left; }
   .scoreboard li { font-size: 20px; padding: 4px 0; font-weight: bold; }
 
+  /* SETUP FEEDBACK */
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20%      { transform: translateX(-8px); }
+    40%      { transform: translateX(8px); }
+    60%      { transform: translateX(-6px); }
+    80%      { transform: translateX(6px); }
+  }
+  input.shake { animation: shake 0.3s ease; }
+  .name-error {
+    color: #c62828;
+    font-weight: bold;
+    font-size: 16px;
+    min-height: 1.3em;
+    margin-top: 8px;
+  }
+
+  /* RESUME BANNER */
+  .resume-banner { margin-bottom: 20px; background: #ffeb3b; }
+  .resume-msg { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+
   /* CONFETTI */
   canvas#confetti {
     position: fixed; inset: 0; pointer-events: none; z-index: 999;
   }
+  /* Only the winner screen shows confetti: a transition away can cancel the rafLoop
+     mid-air, and this keeps any frozen frame from overlaying the next screen. */
+  body:not([data-state="winner"]) canvas#confetti { display: none; }
 
   /* COUNTDOWN SCREEN (the old ready overlay, promoted to a real screen) */
   #countdown-screen { background: rgba(0,0,0,0.5); }
@@ -302,11 +326,19 @@
 <section id="setup-screen" class="screen active">
   <h1>Go Nuts!</h1>
   <div class="subtitle">The craziest player wins.</div>
+  <div class="panel resume-banner" id="resume-banner" hidden>
+    <div class="resume-msg" id="resume-msg">Game in progress.</div>
+    <div class="row">
+      <button id="resume-btn" class="primary">▶ Resume</button>
+      <button id="discard-btn">Discard</button>
+    </div>
+  </div>
   <div class="panel">
     <div class="row">
       <input id="name-input" placeholder="Player name" maxlength="14" autocomplete="off" />
       <button id="add-btn" class="primary">+ Add</button>
     </div>
+    <div class="name-error" id="name-error" aria-live="polite"></div>
     <ul id="player-list" class="player-list"></ul>
     <button id="start-btn" class="go" disabled>START!</button>
     <div class="small">Add at least 2 players</div>
@@ -490,7 +522,32 @@
   const haptics = { buzz() {} };
 
   // ---------- WAKE LOCK ----------
-  // Placeholder — the wakeLock module lands in Phase 1 step 8 (DESIGN.md §3).
+  // Screen wake lock (DESIGN.md §3): held while the game needs an awake screen, released
+  // on idle screens. Pure progressive enhancement — every call is try/catch'd.
+  const wakeLock = (() => {
+    let sentinel = null;
+    let pending = false;
+    const HOLD = ['countdown', 'performing', 'pass', 'rating'];
+    async function acquire() {
+      try {
+        if (sentinel || pending || !navigator.wakeLock) return;
+        pending = true;
+        const s = await navigator.wakeLock.request('screen');
+        pending = false;
+        if (!HOLD.includes(machine.state)) { s.release(); return; }  // state moved on mid-request
+        sentinel = s;
+        s.addEventListener('release', () => { if (sentinel === s) sentinel = null; });
+      } catch { pending = false; sentinel = null; }
+    }
+    function release() {
+      try { sentinel?.release(); } catch {}
+      sentinel = null;
+    }
+    return {
+      wants(state) { return HOLD.includes(state); },
+      sync(to)     { try { this.wants(to) ? acquire() : release(); } catch {} },
+    };
+  })();
 
   // ---------- TIMERS ----------
   // The ONLY way timers/rAF/transient listeners are created (DESIGN.md §2).
@@ -642,11 +699,11 @@
       return false;                        // guarded no-op — this is what makes double-fires harmless
     }
     timers.clearAll();                     // no timer/listener/rAF survives a transition
-    // wakeLock.sync(to) rides here from Phase 1 step 8 (DESIGN.md §3).
+    wakeLock.sync(to);                     // hold the screen awake during live-game states (DESIGN.md §3)
     machine.state = to;
     show(STATES[to].screen);               // the ONLY call site of show()
     STATES[to].enter(payload);
-    // saveGame() rides here from Phase 1 step 7 (DESIGN.md §4).
+    saveGame();                            // persistence rides every transition (DESIGN.md §4)
     return true;
   }
 
@@ -671,27 +728,33 @@
       const x = document.createElement('button');
       x.className = 'x-btn';
       x.textContent = '×';
-      x.onclick = () => { roster.splice(i, 1); renderPlayers(); };
+      x.onclick = () => { roster.splice(i, 1); renderPlayers(); saveGame(); };
       li.appendChild(x);
       playerList.appendChild(li);
     });
     startBtn.disabled = roster.length < CONFIG.MIN_PLAYERS;
   }
 
+  function nameFeedback(msg) {             // message under the input + 300ms shake; cleared on next input
+    $('name-error').textContent = msg;
+    nameInput.classList.add('shake');
+    restartAnim(nameInput);
+  }
+
   function addPlayer() {
     const name = nameInput.value.trim();
-    if (!name) return;
-    if (roster.some(n => n.toLowerCase() === name.toLowerCase())) {
-      nameInput.value = '';
-      return;
-    }
+    if (!name) return nameFeedback('Type a name first!');
+    const dupe = roster.find(n => n.toLowerCase() === name.toLowerCase());
+    if (dupe) return nameFeedback(`${dupe} is already playing!`);
     roster.push(name);
     nameInput.value = '';
     renderPlayers();
+    saveGame();
     nameInput.focus();
   }
 
   function enterSetup() {
+    renderResumeBanner();
     renderPlayers();
   }
 
@@ -827,9 +890,14 @@
   nameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') addPlayer();
   });
+  nameInput.addEventListener('input', () => {      // typing clears the duplicate/empty feedback
+    $('name-error').textContent = '';
+    nameInput.classList.remove('shake');
+  });
 
   startBtn.onclick = () => {
     if (roster.length < CONFIG.MIN_PLAYERS) return;
+    pendingResume = null;                  // starting fresh abandons any undecided snapshot
     game = newGame(roster.slice());
     transition('intro');
   };
@@ -842,6 +910,7 @@
     if (!currentRating || !game?.raterQueue.length) return;
     const raterId = game.raterQueue.shift();
     game.turns.at(-1).ratings[raterId] = currentRating;
+    saveGame();                            // each recorded rating persists (DESIGN.md §4)
     advance();
   };
 
@@ -860,18 +929,88 @@
     if (confirm('Reset everything and start over?')) {
       game = null;
       roster = [];
+      pendingResume = null;
+      store.del(KEYS.game);
       renderPlayers();                     // setup→setup is not an edge, so re-render here too
+      renderResumeBanner();
       transition('setup');
     }
   };
 
+  $('resume-btn').onclick = () => { if (pendingResume) resumeGame(pendingResume); };
+
+  $('discard-btn').onclick = () => {       // keep the roster, drop the progress
+    pendingResume = null;
+    store.del(KEYS.game);
+    renderResumeBanner();                  // setup→setup is not an edge, so re-render in place
+    saveGame();                            // re-persist the kept roster as a setup snapshot
+  };
+
   // ---------- PERSISTENCE ----------
-  // Placeholder — saveGame/loadSnapshot/resumeGame + the resume banner land in Phase 1 step 7 (DESIGN.md §4).
+  // The game snapshot rides every transition() plus roster/rating mutations (DESIGN.md §4).
+  // Timer-owning states rewind via STATES[s].resume, so a mid-flight turn honestly restarts.
+  let pendingResume = null;                // loaded snapshot awaiting the user's Resume/Discard choice
+
+  function saveGame() {
+    if (pendingResume) return;             // never clobber a snapshot the user hasn't decided on
+    if (!machine.state) return;
+    const phase = STATES[machine.state].resume ?? machine.state;
+    if (!game || phase === 'setup') {      // setup phase: roster-only snapshot, restored silently on reload
+      if (roster.length) store.set(KEYS.game, { v: 1, savedAt: Date.now(), phase: 'setup', roster: roster.slice(), game: null });
+      else store.del(KEYS.game);
+      return;
+    }
+    store.set(KEYS.game, { v: 1, savedAt: Date.now(), phase, game });
+  }
+
+  function loadSnapshot() {                // BOOT-only: returns a valid snapshot or silently discards it
+    const snap = store.get(KEYS.game);
+    if (!snap) return null;
+    const ok = snap.v === 1                // no migration code, ever — games last minutes
+      && typeof snap.savedAt === 'number'
+      && Date.now() - snap.savedAt <= CONFIG.RESUME_MAX_AGE_MS
+      && (snap.phase === 'setup'
+            ? Array.isArray(snap.roster)
+            : !!STATES[snap.phase]
+              && Array.isArray(snap.game?.players)
+              && snap.game.players.length >= CONFIG.MIN_PLAYERS);
+    if (!ok) { store.del(KEYS.game); return null; }
+    return snap;
+  }
+
+  function resumeGame(snap) {
+    game = snap.game;
+    game.settings = Object.freeze(game.settings);   // re-freeze the per-game snapshot (DESIGN.md §5)
+    pendingResume = null;
+    machine.state = null;                  // resume targets are always legal from a boot-null state
+    transition(snap.phase);
+  }
+
+  function renderResumeBanner() {
+    const banner = $('resume-banner');
+    if (!pendingResume) { banner.hidden = true; return; }
+    const g = pendingResume.game;
+    const nextId = g.tiebreak ? g.tiebreak.order[g.tiebreak.turnIdx] : g.order[g.turnIdx];
+    const next = g.players.find(p => p.id === nextId);
+    $('resume-msg').textContent =
+      `Game in progress — ${g.players.length} players, round ${g.round}, ${next?.name ?? '?'} up next.`;
+    banner.hidden = false;
+  }
+
+  // Courtesy guard against accidental pull-to-refresh — persistence is the real safety net.
+  // TEST opt-out keeps Playwright reloads from hanging (DESIGN.md §4).
+  window.addEventListener('beforeunload', (e) => { /* raw-timer-ok: permanent listener */
+    if (game !== null && machine.state !== 'setup' && machine.state !== 'winner' && !TEST) e.preventDefault();
+  });
 
   // ---------- CONFETTI ----------
+  // rafLoop lifecycle (DESIGN.md §3): no always-on loop. burstConfetti() starts a registry
+  // rafLoop owned by the current state (winner); the frame returns false once every particle
+  // is dead, and a transition away cancels it like any other timer.
   const canvas = $('confetti');
   const ctx = canvas.getContext('2d');
   let confetti = [];
+  let confettiLoopId = 0;                  // active-loop token: nonzero while a loop is scheduling frames
   function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -894,35 +1033,50 @@
         life: 300 + Math.random() * 200,
       });
     }
-  }
-  function loopConfetti() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    confetti = confetti.filter(p => p.life > 0 && p.y < canvas.height + 30);
-    confetti.forEach(p => {
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vy += 0.08;
-      p.rot += p.vr;
-      p.life--;
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate(p.rot);
-      ctx.fillStyle = p.color;
-      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
-      ctx.restore();
+    // Take ownership of the canvas. The id handshake makes staleness harmless: a loop
+    // cancelled by timers.clearAll() never runs again, and one superseded by a newer
+    // burst bows out on its next frame — so a fresh loop always animates new particles.
+    const id = ++confettiLoopId;
+    timers.rafLoop(() => {
+      if (id !== confettiLoopId) return false;       // a newer burst owns the canvas now
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      confetti = confetti.filter(p => p.life > 0 && p.y < canvas.height + 30);
+      if (!confetti.length) { confettiLoopId = 0; return false; }  // clear the active flag; stop scheduling
+      confetti.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.08;
+        p.rot += p.vr;
+        p.life--;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+        ctx.restore();
+      });
     });
-    requestAnimationFrame(loopConfetti); /* raw-timer-ok: rafLoop lifecycle lands in Phase 1 step 8 */
   }
-  loopConfetti();
 
   // ---------- SW REGISTRATION + BOOT ----------
   // SW registration lands in Phase 2 (skipped under TEST and on file://).
   // Registered ONCE at boot (never per-turn): reads run.turnEndsAt from module state, so a
   // return from a hidden tab repaints honestly — and ends the turn if the deadline passed.
   document.addEventListener('visibilitychange', () => { /* raw-timer-ok: permanent listener */
-    if (!document.hidden && machine.state === 'performing') repaintRing();
+    if (document.hidden) return;
+    if (machine.state === 'performing') repaintRing();
+    if (wakeLock.wants(machine.state)) wakeLock.sync(machine.state);  // re-acquire after tab hide (DESIGN.md §3)
   });
   $('ring-fg').setAttribute('stroke-dasharray', CONFIG.RING_CIRC);
+  const bootSnap = loadSnapshot();         // resume check (DESIGN.md §4)
+  if (bootSnap) {
+    if (bootSnap.phase === 'setup') {
+      roster = bootSnap.roster.slice();    // mid-setup refresh: restore the typed names silently
+    } else {
+      pendingResume = bootSnap;            // enterSetup shows the resume banner
+      roster = bootSnap.game.players.map(p => p.name);   // Discard keeps this roster
+    }
+  }
   transition('setup');                     // boot always lands on setup (machine.state null → always legal)
   if (TEST) window.__gonuts = { machine, timers, transition, getGame: () => game, settings, CONFIG };
 })();
