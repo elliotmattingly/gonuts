@@ -1022,6 +1022,179 @@ scenario('S16 share card: Web Share with files, blob download fallback, non-blan
   assert.ok(cardInfo.opaque, 'card must be fully painted — no transparent holes');
 });
 
+// S17 — Team mode (Phase 4.3): the setup toggle appears at 4 players and auto-balances
+// alternating 🔴🔵 badges (tap to cycle); START blocks with a visible message while a
+// team is empty; the game carries player.teamId + game.teams; teammates NEVER rate each
+// other (rater exclusion checked at every pass screen); team totals are the sum of the
+// member turns' stars; the winner screen crowns the TEAM with its members listed under
+// it; the HOF entry records team name + members; superlatives stay per-player (and the
+// share card can still resolve their names); and a 2v2 dead tie falls straight to
+// co-winner TEAMS — a nut-off would have zero eligible raters, since every neutral is
+// somebody's teammate. Turn order still interleaves all four players individually.
+scenario('S17 team mode: rater exclusion, team totals, team crown; 2v2 all-tie → co-winners', async ({ page, base }) => {
+  const names = ['Ann', 'Ben', 'Cara', 'Dan'];
+  await page.goto(base + Q);
+  await addPlayers(page, names.slice(0, 3));
+  assert.ok(await page.$eval('#team-toggle', el => el.hidden), 'toggle hidden below 4 players');
+  await addPlayers(page, [names[3]]);
+  assert.ok(await page.$eval('#team-toggle', el => !el.hidden), 'toggle appears at 4 players');
+  assert.strictEqual(await page.$$eval('#player-list .team-badge', els => els.length), 0,
+    'no badges while team mode is off');
+
+  await page.click('#team-toggle');
+  assert.strictEqual(await page.getAttribute('#team-toggle', 'aria-pressed'), 'true');
+  assert.strictEqual(await text(page, '#team-toggle'), '🔴🔵 Team mode: On');
+  let badges = await page.$$eval('#player-list .team-badge', els => els.map(el => el.textContent));
+  assert.deepStrictEqual(badges, ['🔴', '🔵', '🔴', '🔵'], 'auto-balanced alternating assignment');
+
+  // A badge tap cycles the row's team; cycling everyone onto red must block START.
+  await page.click('#player-list li:nth-child(2) .team-badge');
+  await page.click('#player-list li:nth-child(4) .team-badge');
+  badges = await page.$$eval('#player-list .team-badge', els => els.map(el => el.textContent));
+  assert.deepStrictEqual(badges, ['🔴', '🔴', '🔴', '🔴'], 'badge taps cycle 🔵 → 🔴');
+  await page.click('#start-btn');
+  assert.strictEqual(await state(page), 'setup', 'START blocked while a team is empty');
+  assert.strictEqual(await text(page, '#name-error'), '🔵 Blue Team needs at least one player!');
+  await page.click('#player-list li:nth-child(2) .team-badge');   // Ben back to blue…
+  assert.strictEqual(await text(page, '#name-error'), '', 'fixing the teams clears the message');
+  await page.click('#player-list li:nth-child(4) .team-badge');   // …and Dan too → Ann+Cara vs Ben+Dan
+  await page.click('#start-btn');
+  await page.waitForSelector('#intro-screen.active');
+
+  // The game model: game.teams { id, name, memberIds } + player.teamId; the turn order
+  // still interleaves ALL four players individually (teams change rating + scoring only).
+  const g0 = await page.evaluate(() => window.__gonuts.getGame());
+  assert.deepStrictEqual(g0.teams, [
+    { id: 't1', name: '🔴 Red Team',  memberIds: ['p1', 'p3'] },
+    { id: 't2', name: '🔵 Blue Team', memberIds: ['p2', 'p4'] },
+  ], 'game.teams carries id/name/memberIds');
+  assert.deepStrictEqual(g0.players.map(p => p.teamId), ['t1', 't2', 't1', 't2'], 'players carry teamId');
+  assert.deepStrictEqual([...g0.order].sort(), ['p1', 'p2', 'p3', 'p4'],
+    'every player performs individually — teams never shrink the order');
+  const teamOf = {};                               // name → teamId (test-side ground truth)
+  g0.players.forEach(p => { teamOf[p.name] = p.teamId; });
+
+  // Play all 4 turns. Red performers romp (5+4), blue flop (2+1) → red wins 18 to 6.
+  // At every pass screen: the summoned rater is never the performer's teammate, and
+  // across the turn the raters are exactly the two opponents.
+  const teamTotals = { t1: 0, t2: 0 };
+  for (let turn = 1; turn <= 4; turn++) {
+    await page.waitForSelector('#intro-screen.active');
+    const info = await page.evaluate(() => {
+      const g = window.__gonuts.getGame();
+      const performer = g.players.find(p => p.id === g.order[g.turnIdx]);
+      return { performer: performer.name, team: performer.teamId,
+               opponents: g.players.filter(p => p.teamId !== performer.teamId).map(p => p.name) };
+    });
+    await page.click('#begin-turn-btn');
+    const stars = info.team === 't1' ? [5, 4] : [2, 1];
+    const summoned = [];
+    for (const s of stars) {
+      await page.waitForSelector('#pass-screen.active', { timeout: 15000 });
+      const rater = await text(page, '#pass-name');
+      summoned.push(rater);
+      assert.notStrictEqual(teamOf[rater], info.team,
+        `teammate ${rater} must never rate ${info.performer} (turn ${turn})`);
+      await page.click('#pass-rate-btn');
+      await page.waitForSelector('#rating-screen.active');
+      assert.ok((await text(page, '#rater-label')).includes('of 2'),
+        'exactly the 2 opponents rate each turn');
+      await page.click(`#stars .star:nth-child(${s})`);
+      await page.click('#submit-rating-btn');
+      teamTotals[info.team] += s;
+    }
+    assert.deepStrictEqual([...summoned].sort(), [...info.opponents].sort(),
+      `every opponent — and only opponents — rated turn ${turn}`);
+  }
+
+  // Winner screen: the crown names the TEAM, its members line up underneath, and the
+  // final scoreboard ranks the two teams with totals = sum of member turns.
+  await page.waitForSelector('#winner-screen.active');
+  assert.strictEqual(await state(page), 'winner');
+  assert.strictEqual(teamTotals.t1, 18); assert.strictEqual(teamTotals.t2, 6);   // script sanity
+  const derived = await page.evaluate(() => {      // log-derived team totals (scores are never stored)
+    const g = window.__gonuts.getGame();
+    const out = { t1: 0, t2: 0 };
+    for (const t of g.turns) {
+      const team = g.players.find(p => p.id === t.performerId).teamId;
+      out[team] += Object.values(t.ratings).reduce((a, b) => a + b, 0);
+    }
+    return out;
+  });
+  assert.deepStrictEqual(derived, teamTotals, 'team totals = sum of member stars in the log');
+  assert.strictEqual(await text(page, '#winner-subtitle'), 'CRAZIEST OF THEM ALL');
+  assert.strictEqual(await text(page, '#winner-name'), '🔴 Red Team', 'the crown names the winning team');
+  assert.ok(await page.$eval('#winner-members', el => !el.hidden), 'members listed under the crown');
+  assert.strictEqual(await text(page, '#winner-members'), 'Ann, Cara');
+  assert.strictEqual(await text(page, '#winner-score'),
+    `${teamTotals.t1} ⭐ (avg ${(teamTotals.t1 / 4).toFixed(1)})`);
+  const lis = await page.$$eval('#final-scores li', els => els.map(el => el.textContent.trim()));
+  assert.strictEqual(lis.length, 2, 'the final scoreboard ranks the two TEAMS');
+  assert.ok(lis[0].startsWith(`🔴 Red Team — ${teamTotals.t1} ⭐`) && lis[0].includes('Ann, Cara'),
+    `top team row with members (got "${lis[0]}")`);
+  assert.ok(lis[1].startsWith(`🔵 Blue Team — ${teamTotals.t2} ⭐`) && lis[1].includes('Ben, Dan'),
+    `runner-up team row with members (got "${lis[1]}")`);
+
+  // Superlatives stay per-player (4 players ≥ 3): the pills name players, not teams —
+  // and the share card can resolve those player ids through the team results.roster.
+  assert.ok(await page.$eval('#superlatives', el => !el.hidden), 'superlatives visible with 4 players');
+  const sups = await page.$$eval('#superlatives .sup-row', els => els.map(el => el.textContent));
+  const bananas = sups.find(s => s.includes('Most Bananas Moment'));
+  assert.ok(bananas && names.some(n => bananas.includes(n)) && !bananas.includes('Team'),
+    `superlatives name players, never teams (got "${bananas}")`);
+  const resShape = await page.evaluate(() => {
+    const r = window.__gonuts.getResults(window.__gonuts.getGame());
+    return { rosterIds: (r.roster || []).map(x => x.id),
+             supIds: r.superlatives.flatMap(s => s.playerIds) };
+  });
+  assert.ok(resShape.supIds.length && resShape.supIds.every(id => resShape.rosterIds.includes(id)),
+    'every superlative playerId resolves through results.roster (the card\'s name path)');
+  const cardInfo = await page.evaluate(() => {     // the card renders team results without blowing up
+    const g = window.__gonuts;
+    const c = g.renderShareCard(g.getResults(g.getGame()));
+    const d = c.getContext('2d');
+    const { data } = d.getImageData(0, 0, c.width, c.height);
+    const seen = new Set();
+    for (let i = 0; i < data.length; i += 3989 * 4) seen.add(`${data[i]},${data[i + 1]},${data[i + 2]}`);
+    return { w: c.width, h: c.height, distinct: seen.size };
+  });
+  assert.strictEqual(cardInfo.w, 1080); assert.strictEqual(cardInfo.h, 1350);
+  assert.ok(cardInfo.distinct > 12, `team share card paints non-uniform pixels (got ${cardInfo.distinct})`);
+
+  // HOF: the entry records team name + members, with the team total.
+  const hof = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.hof')));
+  assert.deepStrictEqual(hof.entries[0].winners, ['🔴 Red Team (Ann, Cara)'],
+    'the HOF entry records the team name + members');
+  assert.strictEqual(hof.entries[0].stars, teamTotals.t1);
+
+  // ---- 2v2 dead tie → co-winner TEAMS (Play Again keeps the same teams) ----
+  // Every turn rates [3, 3] → all four players total 6 → 12 vs 12. A NUT-OFF would have
+  // zero eligible raters (every neutral is a contender's teammate), so advance() must
+  // fall to the co-winner crown — never an unratable sudden-death turn.
+  await page.click('#play-again-btn');
+  await page.waitForSelector('#intro-screen.active');
+  const gB = await page.evaluate(() => window.__gonuts.getGame());
+  assert.deepStrictEqual(gB.teams.map(t => t.memberIds), [['p1', 'p3'], ['p2', 'p4']],
+    'Play Again keeps the same teams');
+  assert.strictEqual(gB.turns.length, 0, 'Play Again starts a fresh log');
+  for (let turn = 1; turn <= 4; turn++) {
+    await page.waitForSelector('#intro-screen.active');
+    await playTurn(page, [3, 3]);
+  }
+  await page.waitForSelector('#winner-screen.active');
+  const gTie = await page.evaluate(() => window.__gonuts.getGame());
+  assert.strictEqual(gTie.tiebreak, null,
+    'a 2v2 all-tie must never arm a NUT-OFF (zero eligible raters)');
+  assert.ok(gTie.turns.every(t => !t.nutoff), 'no sudden-death turns were played');
+  assert.strictEqual(await text(page, '#winner-subtitle'), 'CO-CRAZIEST OF THEM ALL');
+  assert.strictEqual(await text(page, '#winner-name'), '🔴 Red Team & 🔵 Blue Team');
+  assert.strictEqual(await text(page, '#winner-members'), 'Ann, Cara & Ben, Dan');
+  const hofB = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.hof')));
+  assert.strictEqual(hofB.entries.length, 2);
+  assert.deepStrictEqual(hofB.entries[0].winners,
+    ['🔴 Red Team (Ann, Cara)', '🔵 Blue Team (Ben, Dan)'], 'both co-winner teams enter the HOF');
+});
+
 // ---------- runner ----------
 (async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

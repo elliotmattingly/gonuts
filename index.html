@@ -419,6 +419,26 @@
   #hof-panel li { font-size: 16px; font-weight: bold; padding: 3px 0; }
   #hof-panel li .small { font-weight: normal; display: block; }
 
+  /* TEAM MODE (Phase 4.3): the setup toggle + per-row 🔴🔵 badges + the winner screen's
+     members line. A badge tap cycles its row through TEAM_META; individual mode renders
+     none of this (the whole feature sits behind the setup teamMode flag / game.teams). */
+  #team-toggle { font-size: 17px; padding: 8px 18px; box-shadow: 3px 3px 0 var(--ink); }
+  .team-badge {
+    background: #fff; border: 2px solid var(--ink); border-radius: 50%;
+    width: 36px; height: 36px; font-size: 16px; padding: 0; line-height: 1;
+    box-shadow: 2px 2px 0 var(--ink); margin: 0 10px 0 0; flex-shrink: 0;
+  }
+  .player-list li.teamed span { flex: 1; text-align: left; overflow-wrap: anywhere; }
+  #winner-members {
+    font-size: clamp(18px, 4vw, 30px);
+    color: var(--paper);
+    text-shadow: 2px 2px 0 var(--ink);
+    font-weight: bold;
+    margin: 0 0 6px;
+    overflow-wrap: anywhere;   /* four max-length names never clip on a 320px viewport */
+  }
+  .scoreboard li .small { display: block; font-weight: normal; }   /* team rows: members under the team line */
+
   /* SETUP FEEDBACK */
   @keyframes shake {
     0%, 100% { transform: translateX(0); }
@@ -427,7 +447,7 @@
     60%      { transform: translateX(-6px); }
     80%      { transform: translateX(6px); }
   }
-  input.shake { animation: shake 0.3s ease; }
+  .shake { animation: shake 0.3s ease; }   /* the name input — and START on a team-validation rejection (4.3) */
   .name-error {
     color: #c62828;
     font-weight: bold;
@@ -653,6 +673,8 @@
     </div>
     <div class="name-error" id="name-error" aria-live="polite"></div>
     <ul id="player-list" class="player-list"></ul>
+    <!-- Team mode (Phase 4.3): shown from TEAM_MIN_PLAYERS up; badges cycle on tap -->
+    <button id="team-toggle" aria-pressed="false" hidden>🔴🔵 Team mode: Off</button>
     <button id="start-btn" class="go" disabled>START!</button>
     <div class="small">Add at least 2 players</div>
   </div>
@@ -750,6 +772,8 @@
   <div class="crown">👑</div>
   <div class="subtitle" id="winner-subtitle">CRAZIEST OF THEM ALL</div>
   <h2 class="winner-name" id="winner-name" tabindex="-1">—</h2>
+  <!-- Team mode (Phase 4.3): the crowned team's members, listed under the team name -->
+  <div id="winner-members" hidden>—</div>
   <div class="winner-score" id="winner-score">— stars</div>
   <div id="crew-line" hidden>—</div>
   <div class="scoreboard">
@@ -929,6 +953,7 @@
     WARN_AT_S:      8,                     // ring orange
     ANNOUNCE_AT_S:  5,                     // aria-live seconds announcements start here (G-UX5)
     MIN_PLAYERS:    2,
+    TEAM_MIN_PLAYERS: 4,                   // Phase 4.3: the team-mode toggle appears at this roster size
     MAX_NAME_LEN:   14,
     SKIPS_PER_PLAYER: 1,                   // Phase 3 prompt skips
     DECK_MIN_PROMPTS: 10,                  // Phase 4.1 editor: a custom deck needs at least this many prompts
@@ -1309,13 +1334,33 @@
   let game = null;
   let roster = [];                         // setup-screen names; newGame() consumes a copy
 
-  function newGame(playerNames) {
+  // Team mode (Phase 4.3): setup-only state — rosterTeams[i] indexes TEAM_META for roster[i].
+  // Deliberately NOT persisted (the setup snapshot keeps only names); a STARTED game carries
+  // its teams in game.teams / player.teamId, which ride the game snapshot like any field.
+  let teamMode = false;
+  let rosterTeams = [];
+
+  const TEAM_META = Object.freeze([        // exactly two teams — badges cycle through this list
+    Object.freeze({ id: 't1', name: '🔴 Red Team',  badge: '🔴' }),
+    Object.freeze({ id: 't2', name: '🔵 Blue Team', badge: '🔵' }),
+  ]);
+
+  function newGame(playerNames, teamIdx = null) {        // teamIdx (4.3): per-player index into TEAM_META, or null
     const players = playerNames.map((name, i) => ({ id: 'p' + (i + 1), name }));
+    let teams = null;
+    if (teamIdx) {                                       // team games only: player.teamId + game.teams
+      teams = TEAM_META.map(t => ({ id: t.id, name: t.name, memberIds: [] }));
+      players.forEach((p, i) => {
+        p.teamId = teams[teamIdx[i]].id;
+        teams[teamIdx[i]].memberIds.push(p.id);
+      });
+    }
     const frozen = Object.freeze({ ...settings });       // frozen snapshot (DESIGN.md §5)
     return {
       v: 2,                                              // Phase 3 schema — v1 saves are discarded, never migrated
       settings: frozen,
       players,                                           // stable ids for the whole game; never key by name
+      ...(teams && { teams }),                           // team games only — individual snapshots stay byte-identical (4.3)
       order: shuffle(players.map(p => p.id)),            // Fisher-Yates: fresh order every game (and round, from 3.5)
       round: 1,
       turnIdx: 0,                                        // index into order (or tiebreak.order during NUT-OFF)
@@ -1340,32 +1385,44 @@
     return game?.players.find(p => p.id === id) || null;
   }
 
-  function nameOf(id) {                    // id → display name (Phase 4 team mode extends this)
+  function nameOf(id) {                    // id → display name
     return game?.players.find(p => p.id === id)?.name ?? '?';
   }
 
-  function getRaterIds(g, performerId) {   // NUT-OFF (3.3): non-contenders only — tied players never rate each other; P4: non-teammates
-    if (g.tiebreak) return g.players.map(p => p.id).filter(id => !g.tiebreak.contenders.includes(id));
-    return g.players.map(p => p.id).filter(id => id !== performerId);
+  function teamIdOf(g, id) {               // team mode (4.3): a player's team — undefined in individual games
+    return g.players.find(p => p.id === id)?.teamId;
+  }
+
+  function getRaterIds(g, performerId) {   // NUT-OFF (3.3): non-contenders only; team mode (4.3): non-teammates only
+    let ids = g.players.map(p => p.id);
+    ids = g.tiebreak ? ids.filter(id => !g.tiebreak.contenders.includes(id))   // tied players never rate each other
+                     : ids.filter(id => id !== performerId);
+    if (g.teams) {                         // teammates never rate their own performer (DESIGN.md §8.3);
+      const team = teamIdOf(g, performerId);        // during a NUT-OFF both exclusions apply
+      ids = ids.filter(id => teamIdOf(g, id) !== team);
+    }
+    return ids;
   }
 
   function starsFor(turn) {
     return Object.values(turn.ratings).reduce((a, b) => a + b, 0);
   }
 
-  function totalsFor(g, { nutoffOnly = false } = {}) {   // main totals exclude NUT-OFF turns (DESIGN.md §7)
-    const totals = new Map(g.players.map(p => [p.id, { total: 0, turnCount: 0, avg: 0 }]));
+  function totalsFor(g, { nutoffOnly = false, by = null } = {}) {   // main totals exclude NUT-OFF turns (DESIGN.md §7)
+    const key = by || (id => id);          // { by } (4.3): optional key-function grouping — team games pass id → teamId
+    const totals = new Map(g.players.map(p => [key(p.id), { total: 0, turnCount: 0, avg: 0 }]));
     const ratingCounts = new Map();                      // ratings received, for the per-rating average
     for (const t of g.turns) {
       if (!!t.nutoff !== nutoffOnly) continue;
-      const row = totals.get(t.performerId);
+      const k = key(t.performerId);
+      const row = totals.get(k);
       if (!row) continue;
       row.total += starsFor(t);
       row.turnCount++;
-      ratingCounts.set(t.performerId, (ratingCounts.get(t.performerId) || 0) + Object.keys(t.ratings).length);
+      ratingCounts.set(k, (ratingCounts.get(k) || 0) + Object.keys(t.ratings).length);
     }
-    for (const [id, row] of totals) {
-      const n = ratingCounts.get(id) || 0;
+    for (const [k, row] of totals) {
+      const n = ratingCounts.get(k) || 0;
       row.avg = n ? row.total / n : 0;
     }
     return totals;
@@ -1374,7 +1431,7 @@
   function computeWinners(g, opts) {       // ALWAYS an array — ties are explicit, never sorted[0]
     const totals = totalsFor(g, opts);
     const max = Math.max(...[...totals.values()].map(r => r.total));
-    return g.players.map(p => p.id).filter(id => totals.get(id).total === max);
+    return [...totals.keys()].filter(k => totals.get(k).total === max);   // player ids — or team ids under { by }
   }
 
   function computeSuperlatives(g) {        // Phase 3.6 — fun awards mined from the raw log; intra-award ties all listed
@@ -1423,6 +1480,21 @@
   }
 
   function getResults(g) {                 // view-model for the winner screen, scoreboards, HOF, share card
+    if (g.teams) {                         // Team mode (4.3): rank the TEAMS; superlatives stay per-player.
+      const byTeam = { by: id => teamIdOf(g, id) };
+      const teamTotals = totalsFor(g, byTeam);
+      const rows = g.teams
+        .map(t => ({ id: t.id, name: t.name,
+                     members: t.memberIds.map(id => g.players.find(p => p.id === id)?.name ?? '?'),
+                     ...teamTotals.get(t.id) }))
+        .sort((a, b) => b.total - a.total);
+      // No tiebreak resolution here on purpose: a team NUT-OFF is unreachable — with two
+      // teams every team tie leaves zero eligible raters, so advance()'s zero-rater guard
+      // already fell to the co-winner crown.
+      const winners = computeWinners(g, byTeam).map(id => rows.find(r => r.id === id));
+      return { winners, rows, superlatives: computeSuperlatives(g), coWinners: winners.length > 1,
+               roster: g.players.map(p => ({ id: p.id, name: p.name })) };  // per-player names for the share card's superlative pills
+    }
     const totals = totalsFor(g);
     const rows = g.players
       .map(p => ({ id: p.id, name: p.name, ...totals.get(p.id) }))
@@ -1462,11 +1534,24 @@
     g.turnIdx++;
     if (g.turnIdx < g.order.length) return transition('intro');
     if (g.round < g.settings.rounds) return transition('roundEnd');   // Phase 3.5: more rounds to play
-    const winners = computeWinners(g);
-    // A partial top tie goes to sudden death (3.3). A unique winner — or an ALL-player
-    // tie, which leaves no neutral raters (including every 2-player tie) — goes straight
-    // to the crown; enterWinner celebrates the latter as co-winners.
-    if (winners.length === 1 || winners.length === g.players.length) return transition('winner');
+    // Team games (4.3) tie at the TEAM level; a would-be NUT-OFF's contenders are every
+    // member of the tied teams. Individual games keep the per-player winners.
+    let winners;
+    if (g.teams) {
+      const tied = computeWinners(g, { by: id => teamIdOf(g, id) });
+      if (tied.length === 1) return transition('winner');
+      winners = g.players.filter(p => tied.includes(p.teamId)).map(p => p.id);
+    } else {
+      winners = computeWinners(g);
+      if (winners.length === 1) return transition('winner');
+    }
+    // A partial top tie goes to sudden death (3.3) — but only when every contender has at
+    // least one eligible rater. An ALL-player tie leaves none (including every 2-player
+    // tie), and a team tie makes every neutral a contender's teammate (with two teams,
+    // EVERY team tie) — both fall to the co-winner crown instead of an unratable turn.
+    // The probe runs the real rater rule, so the guard and the flow can never drift (4.3).
+    const probe = { ...g, tiebreak: { contenders: winners } };
+    if (winners.some(id => !getRaterIds(probe, id).length)) return transition('winner');
     return transition('nutoff', { contenders: winners });
   }
 
@@ -1538,14 +1623,30 @@
   const startBtn = $('start-btn');
 
   function renderPlayers() {
+    if (teamMode && roster.length < CONFIG.TEAM_MIN_PLAYERS) teamMode = false;  // shrinking below 4 turns teams off
+    renderTeamToggle();
     playerList.innerHTML = '';
     roster.forEach((name, i) => {
       const li = document.createElement('li');
       li.innerHTML = `<span>${escapeHtml(name)}</span>`;
+      if (teamMode) {                      // Phase 4.3: the tap-to-cycle team badge leads the row
+        li.className = 'teamed';
+        const badge = document.createElement('button');
+        badge.className = 'team-badge';
+        badge.textContent = TEAM_META[rosterTeams[i]].badge;
+        badge.setAttribute('aria-label', `${name}: ${TEAM_META[rosterTeams[i]].name} — tap to switch team`);
+        badge.onclick = () => {            // setup-only data op — a key-repeat after START must not remix teams
+          if (machine.state !== 'setup') return;
+          rosterTeams[i] = (rosterTeams[i] + 1) % TEAM_META.length;
+          $('name-error').textContent = '';
+          renderPlayers();
+        };
+        li.prepend(badge);
+      }
       const x = document.createElement('button');
       x.className = 'x-btn';
       x.textContent = '×';
-      x.onclick = () => { roster.splice(i, 1); renderPlayers(); saveGame(); };
+      x.onclick = () => { roster.splice(i, 1); rosterTeams.splice(i, 1); renderPlayers(); saveGame(); };
       li.appendChild(x);
       playerList.appendChild(li);
     });
@@ -1553,10 +1654,17 @@
     syncMascot();                          // the roster just grew/shrank the setup panel
   }
 
-  function nameFeedback(msg) {             // message under the input + 300ms shake; cleared on next input
+  function renderTeamToggle() {            // Phase 4.3: the toggle appears only from TEAM_MIN_PLAYERS up
+    const btn = $('team-toggle');
+    btn.hidden = roster.length < CONFIG.TEAM_MIN_PLAYERS;
+    btn.textContent = teamMode ? '🔴🔵 Team mode: On' : '🔴🔵 Team mode: Off';
+    btn.setAttribute('aria-pressed', String(teamMode));
+  }
+
+  function nameFeedback(msg, el = nameInput) {   // message under the input + 300ms shake; cleared on next input
     $('name-error').textContent = msg;
-    nameInput.classList.add('shake');
-    restartAnim(nameInput);
+    el.classList.add('shake');
+    restartAnim(el);
   }
 
   function addPlayer() {
@@ -1565,6 +1673,10 @@
     const dupe = roster.find(n => n.toLowerCase() === name.toLowerCase());
     if (dupe) return nameFeedback(`${dupe} is already playing!`);
     roster.push(name);
+    if (teamMode) {                        // joiners auto-balance onto the smaller team (red on ties)
+      const red = rosterTeams.filter(t => t === 0).length;
+      rosterTeams.push(red <= rosterTeams.length - red ? 0 : 1);
+    }
     nameInput.value = '';
     renderPlayers();
     saveGame();
@@ -1761,17 +1873,25 @@
   // -- roundEnd (multi-round, Phase 3.5) --
   // Renders purely from getResults(game).rows — totals accumulate automatically because
   // every turn entry carries its round. Resumable as itself (owns no timers, no resume key).
+  function scoreLi(r) {                    // one scoreboard row; team rows (4.3) list their members underneath
+    const li = document.createElement('li');
+    li.textContent = `${r.name} — ${r.total} ⭐ (avg ${r.avg.toFixed(1)})`;
+    if (r.members) {
+      const sub = document.createElement('span');
+      sub.className = 'small';
+      sub.textContent = r.members.join(', ');
+      li.appendChild(sub);
+    }
+    return li;
+  }
+
   function enterRoundEnd() {
     const g = game;
     if (!g) return transition('setup');
     $('roundend-title').textContent = `Round ${g.round} done!`;
     const ol = $('round-scores');
     ol.innerHTML = '';
-    getResults(g).rows.forEach(r => {
-      const li = document.createElement('li');
-      li.textContent = `${r.name} — ${r.total} ⭐ (avg ${r.avg.toFixed(1)})`;
-      ol.appendChild(li);
-    });
+    getResults(g).rows.forEach(r => ol.appendChild(scoreLi(r)));
     $('next-round-btn').textContent = `Round ${g.round + 1}!`;
   }
 
@@ -1836,7 +1956,7 @@
       hof.entries.unshift({                // newest first, capped (DESIGN.md §7)
         at: Date.now(), crewKey,
         players: g.players.map(p => p.name),
-        winners: res.winners.map(w => w.name),
+        winners: res.winners.map(w => w.members ? `${w.name} (${w.members.join(', ')})` : w.name),  // team games (4.3): name + members
         stars: res.winners[0].total,
         rounds: g.settings.rounds,
         hadNutoff: !!g.tiebreak,
@@ -1856,15 +1976,15 @@
     // all-player tie (no neutral raters — including every 2-player tie).
     $('winner-subtitle').textContent = res.coWinners ? 'CO-CRAZIEST OF THEM ALL' : 'CRAZIEST OF THEM ALL';
     $('winner-name').textContent = res.winners.map(w => w.name).join(' & ');
+    // Team games (4.3): the crown names the TEAM — its members line up underneath.
+    const members = res.winners[0].members ? res.winners.map(t => t.members.join(', ')).join(' & ') : '';
+    $('winner-members').hidden = !members;
+    $('winner-members').textContent = members || '—';
     const w = res.winners[0];
     $('winner-score').textContent = `${w.total} ⭐ (avg ${w.avg.toFixed(1)})`;
     const ol = $('final-scores');
     ol.innerHTML = '';
-    res.rows.forEach(r => {
-      const li = document.createElement('li');
-      li.textContent = `${r.name} — ${r.total} ⭐ (avg ${r.avg.toFixed(1)})`;
-      ol.appendChild(li);
-    });
+    res.rows.forEach(r => ol.appendChild(scoreLi(r)));
     renderSuperlatives(res.superlatives);
     const titles = updateHof(res);         // append once (hofRecorded guard) + crew title count
     $('crew-line').hidden = titles < 2;    // a first title is no streak — the callout starts at 2
@@ -1889,9 +2009,24 @@
     // drew the first prompt — the live game would start promptless while the intro
     // shows the discarded game's performer (the blocked transition can't stop the mutation).
     if (machine.state !== 'setup' || roster.length < CONFIG.MIN_PLAYERS) return;
+    if (teamMode) {                        // Phase 4.3: both teams need at least one member
+      const empty = TEAM_META.findIndex((_, ti) => !rosterTeams.includes(ti));
+      if (empty !== -1) return nameFeedback(`${TEAM_META[empty].name} needs at least one player!`, startBtn);
+    }
     pendingResume = null;                  // starting fresh abandons any undecided snapshot
-    game = newGame(roster.slice());
+    game = newGame(roster.slice(), teamMode ? rosterTeams.slice() : null);
     transition('intro');
+  };
+
+  // Team mode toggle (Phase 4.3): setup-only data op + re-render — never a transition.
+  // The machine.state guard follows the startBtn pattern (a key-repeat double fire after
+  // START must not flip the mode under the game the blocked transition left behind).
+  $('team-toggle').onclick = () => {
+    if (machine.state !== 'setup' || roster.length < CONFIG.TEAM_MIN_PLAYERS) return;
+    teamMode = !teamMode;
+    if (teamMode) rosterTeams = roster.map((_, i) => i % TEAM_META.length);   // auto-balanced: alternate 🔴🔵 down the list
+    $('name-error').textContent = '';
+    renderPlayers();
   };
 
   $('begin-turn-btn').onclick = () => transition('countdown');
@@ -1950,7 +2085,8 @@
 
   $('play-again-btn').onclick = () => {    // fresh game, same crew (order reshuffles from Phase 3)
     if (machine.state !== 'winner' || !game) return;   // same double-fire hazard as startBtn: never replace a game enterIntro already drew into
-    game = newGame(game.players.map(p => p.name));
+    game = newGame(game.players.map(p => p.name),      // …and the same teams (Phase 4.3)
+                   game.teams ? game.players.map(p => TEAM_META.findIndex(t => t.id === p.teamId)) : null);
     transition('intro');
   };
 
@@ -2356,8 +2492,8 @@
   // ---------- SHARE CARD ----------
   // Phase 4.2 (DESIGN.md §8.2): renderShareCard(results) paints the winner screen's
   // getResults() view-model — and NOTHING else: superlative names resolve via
-  // results.rows, never nameOf()/game, so the Phase 4.3 team rows will render here
-  // generically — onto an OFFSCREEN 1080x1350 canvas in the game's neo-brutalist
+  // results.rows (+ the per-player results.roster that team games add in 4.3), never
+  // nameOf()/game — onto an OFFSCREEN 1080x1350 canvas in the game's neo-brutalist
   // language (flat panels, thick ink borders, hard offset shadows, the five-stop
   // gradient). The canvas IS the whole asset pipeline (hard invariant 1): no new
   // files, no fetched fonts — Comic Sans falls back to the device's bold system-ui.
@@ -2500,8 +2636,11 @@
     y += panelH + pillLead;
 
     // Superlative pills (>= 3 players): title in the app's purple, names in ink,
-    // detail line below — names resolve via results.rows only.
-    const nameById = new Map(results.rows.map(r => [r.id, r.name]));
+    // detail line below — names resolve via the results view-model only. Team rows
+    // carry team ids, so the per-player superlative ids resolve through the roster
+    // the team view-model adds; individual results have no roster and keep resolving
+    // through rows exactly as before (Phase 4.3).
+    const nameById = new Map([...results.rows, ...(results.roster ?? [])].map(r => [r.id, r.name]));
     for (const s of sups) {
       panel(PAD, y, W - PAD * 2, pillH, { r: 26, off: 7, stroke: 5 });
       const who = s.playerIds.map(id => nameById.get(id) ?? '?').join(' & ');
