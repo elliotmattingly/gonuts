@@ -119,6 +119,14 @@
     transform: translate(4px, 4px);
     box-shadow: 2px 2px 0 var(--ink);
   }
+  /* Gated buttons (#start-btn, #submit-rating-btn, #deck-save-btn) must LOOK gated:
+     dimmed, flat cursor, and a shallower shadow so they read as unpressable — still
+     fully neo-brutalist (ink border + hard offset shadow stay). */
+  button:disabled {
+    opacity: 0.55;
+    cursor: default;
+    box-shadow: 3px 3px 0 var(--ink);
+  }
   button.primary { background: #ffeb3b; }
   button.danger  { background: #ff5252; color: #fff; }
   button.go {
@@ -426,8 +434,13 @@
   .team-badge {
     background: #fff; border: 2px solid var(--ink); border-radius: 50%;
     width: 36px; height: 36px; font-size: 16px; padding: 0; line-height: 1;
-    box-shadow: 2px 2px 0 var(--ink); margin: 0 10px 0 0; flex-shrink: 0;
+    box-shadow: 2px 2px 0 var(--ink); margin: 0 6px 0 0; flex-shrink: 0;
   }
+  /* Badged rows squeeze the name between the 36px badge and the × button — on a 320px
+     viewport the roster's 20px font broke names mid-word, so teamed rows shrink to
+     17px and trade row padding for name width; overflow-wrap stays the fallback for
+     the widest 14-char names, which now wrap once instead of twice. */
+  .player-list li.teamed { font-size: 17px; padding: 10px 10px; }
   .player-list li.teamed span { flex: 1; text-align: left; overflow-wrap: anywhere; }
   #winner-members {
     font-size: clamp(18px, 4vw, 30px);
@@ -557,7 +570,14 @@
   .footer-btn { position: fixed; z-index: 10;
                 font-size: 16px; padding: 8px 14px; box-shadow: 3px 3px 0 var(--ink);
                 top: 12px;
-                top: calc(12px + env(safe-area-inset-top, 0px)); }
+                top: calc(12px + env(safe-area-inset-top, 0px));
+                transition: opacity 0.2s ease; }
+  /* A scrolled-away screen slides interactive rows under the fixed corner chrome, so
+     the chrome bows out (untappable too) while the ACTIVE screen is off its top —
+     syncChrome() stamps body.scrolled from one boot-registered scroll listener, and
+     the chrome is back the moment scrollTop returns to 0 (the opacity transition is
+     the only debounce — no timers). */
+  body.scrolled .footer-btn { opacity: 0; pointer-events: none; }
   #reset-btn { left: 12px; left: calc(12px + env(safe-area-inset-left, 0px)); }
   .footer-btn.right { right: 12px; right: calc(12px + env(safe-area-inset-right, 0px)); }
   /* The settings gear sits left of #sound-btn and appears ONLY on the idle screens
@@ -674,7 +694,8 @@
     <div class="name-error" id="name-error" aria-live="polite"></div>
     <ul id="player-list" class="player-list"></ul>
     <!-- Team mode (Phase 4.3): shown from TEAM_MIN_PLAYERS up; badges cycle on tap -->
-    <button id="team-toggle" aria-pressed="false" hidden>🔴🔵 Team mode: Off</button>
+    <!-- "Teams:", not "Team mode:" — the longer label wrapped to two lines at 320px -->
+    <button id="team-toggle" aria-pressed="false" hidden>🔴🔵 Teams: Off</button>
     <button id="start-btn" class="go" disabled>START!</button>
     <div class="small">Add at least 2 players</div>
   </div>
@@ -895,7 +916,7 @@
 <div id="settings-sheet" hidden>
   <div id="sheet-backdrop"></div>
   <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
-    <h3 id="sheet-title">⚙️ Settings</h3>
+    <h3 id="sheet-title" tabindex="-1">⚙️ Settings</h3>
     <!-- Segmented pickers (Phase 3.5): turn/rounds buttons are built once at boot from
          CONFIG.TURN_CHOICES / CONFIG.ROUND_CHOICES; the deck picker is REBUILT by
          renderDeckPicker() because custom decks (Phase 4.1) change the registry itself. -->
@@ -1582,6 +1603,7 @@
     show(STATES[to].screen);               // the ONLY call site of show()
     STATES[to].enter(payload);
     syncMascot();                          // content just rendered — re-measure the mascot bow-out
+    syncChrome();                          // fresh screens start unscrolled — restore the corner chrome
     saveGame();                            // persistence rides every transition (DESIGN.md §4)
     return true;
   }
@@ -1614,6 +1636,17 @@
     const scr = document.querySelector('.screen.active');
     const crowded = !!scr && scr.scrollHeight > scr.clientHeight + 1;
     document.body.classList.toggle('crowded', crowded);
+  }
+
+  // Corner-chrome bow-out: while the ACTIVE screen is scrolled away from its top, the
+  // fixed Reset/gear/mute would sit over interactive rows (roster × buttons, HOF list),
+  // so body.scrolled fades them out and drops their pointer-events (CSS above). Pure
+  // sync class stamp — no timers; the scroll listener rides BOOT (screens don't bubble
+  // scroll, so it listens in the capture phase), and transition() re-stamps so a fresh
+  // screen always gets its chrome back.
+  function syncChrome() {
+    const scr = document.querySelector('.screen.active');
+    document.body.classList.toggle('scrolled', !!scr && scr.scrollTop > 0);
   }
 
   // -- setup --
@@ -1657,7 +1690,7 @@
   function renderTeamToggle() {            // Phase 4.3: the toggle appears only from TEAM_MIN_PLAYERS up
     const btn = $('team-toggle');
     btn.hidden = roster.length < CONFIG.TEAM_MIN_PLAYERS;
-    btn.textContent = teamMode ? '🔴🔵 Team mode: On' : '🔴🔵 Team mode: Off';
+    btn.textContent = teamMode ? '🔴🔵 Teams: On' : '🔴🔵 Teams: Off';   // short: single-line at 320px
     btn.setAttribute('aria-pressed', String(teamMode));
   }
 
@@ -1875,7 +1908,7 @@
   // every turn entry carries its round. Resumable as itself (owns no timers, no resume key).
   function scoreLi(r) {                    // one scoreboard row; team rows (4.3) list their members underneath
     const li = document.createElement('li');
-    li.textContent = `${r.name} — ${r.total} ⭐ (avg ${r.avg.toFixed(1)})`;
+    li.textContent = `${r.name} — ${r.total}\u00a0⭐ (avg ${r.avg.toFixed(1)})`;   // nbsp: never orphan-wrap a lone ⭐
     if (r.members) {
       const sub = document.createElement('span');
       sub.className = 'small';
@@ -2251,7 +2284,15 @@
     for (const el of document.body.children) {       // inert the whole background, not just pointers
       if (el !== sheet && el.tagName !== 'SCRIPT') el.inert = open;
     }
-    if (open) { renderSoundControls(); renderDeckPicker(); renderSheetPickers(); $('sheet-close').focus(); }
+    if (open) {
+      renderSoundControls(); renderDeckPicker(); renderSheetPickers();
+      // Focus the TOP-anchored heading, never the bottom-anchored Done button: on
+      // short viewports the dvh-capped panel scrolls, and focusing Done auto-scrolled
+      // the sheet open mid-list. The heading carries tabindex="-1" (its focus ring is
+      // already suppressed); pinning scrollTop makes the open position deterministic.
+      sheet.querySelector('.sheet-panel').scrollTop = 0;
+      $('sheet-title').focus({ preventScroll: true });
+    }
     else if (hadFocus) $('settings-btn').focus();    // hand focus back to the opener
   }
 
@@ -2584,17 +2625,23 @@
     text('👑', W / 2, 268, 116);
     text(results.coWinners ? 'CO-CRAZIEST OF THEM ALL' : 'CRAZIEST OF THEM ALL', W / 2, 370, 38, { shadow: 4 });
     const names = results.winners.map(w => w.name).join(' & ');
-    const namePx = fitPx(names, 96, 48, W - PAD * 2);
+    const namePx = fitPx(names, 96, 40, W - PAD * 2);   // 40px floor: two 14-char co-winners fit un-ellipsized
     text(names, W / 2, 447, namePx, { fill: GOLD, shadow: 7, stroke: Math.max(4, Math.round(namePx * 0.09)),
                                       maxW: W - PAD * 2, angle: -2 });
     const w0 = results.winners[0];
     text(`${w0.total} ⭐  ·  avg ${w0.avg.toFixed(1)}`, W / 2, 534, 44, { shadow: 4 });
+    let top = 592;                                      // the content band opens under the star line…
+    if (w0.members) {                                   // …but a team crown (4.3) first names its players,
+      text(results.winners.map(t => t.members.join(', ')).join(' & '),   // mirroring #winner-members
+           W / 2, 592, 32, { shadow: 3, maxW: W - PAD * 2 });
+      top = 646;                                        // the band shrinks; the budget loop below absorbs it
+    }
 
     // Vertical budget: the footer line is fixed; superlative pills bid for their space;
     // the scoreboard panel takes the rest — shrinking row height first, then trading
     // pills away (a full scoreboard beats a third pill), and only as a last resort
     // truncating rows behind a "+N more" line. Nothing can overlap by construction.
-    const top = 592, bottom = H - 96;                // the content band between header and footer
+    const bottom = H - 96;                           // the content band ends above the fixed footer
     const headH = 84, padB = 26, pillH = 96, pillGap = 16, pillLead = 24;
     const sups = results.superlatives.slice(0, 3);
     let rows = results.rows, more = 0, rowH = 0;
@@ -2675,6 +2722,9 @@
     if (wakeLock.wants(machine.state)) wakeLock.sync(machine.state);  // re-acquire after tab hide (DESIGN.md §3)
   });
   window.addEventListener('resize', syncMascot); /* raw-timer-ok: permanent listener — rotation/keyboard resizes re-measure the bow-out */
+  // Scroll events don't bubble, so the corner-chrome stamp listens in the capture phase;
+  // passive: it only toggles a body class, never preventDefault.
+  document.addEventListener('scroll', syncChrome, { capture: true, passive: true }); /* raw-timer-ok: permanent listener */
   $('ring-fg').setAttribute('stroke-dasharray', CONFIG.RING_CIRC);
   renderSoundControls();                   // paint the persisted mute state onto the fixed chrome
   const bootSnap = loadSnapshot();         // resume check (DESIGN.md §4)

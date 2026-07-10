@@ -121,7 +121,7 @@ scenario('S1 happy path: totals/avgs/ranking derived correctly', async ({ page, 
   assert.strictEqual(await text(page, '#winner-subtitle'), 'CRAZIEST OF THEM ALL');
   assert.strictEqual(await text(page, '#winner-score'), `${winners[0].total} ⭐ (avg ${winners[0].avg.toFixed(1)})`);
   const lis = await page.$$eval('#final-scores li', els => els.map(el => el.textContent.trim()));
-  assert.deepStrictEqual(lis, rows.map(r => `${r.name} — ${r.total} ⭐ (avg ${r.avg.toFixed(1)})`));
+  assert.deepStrictEqual(lis, rows.map(r => `${r.name} — ${r.total}\u00a0⭐ (avg ${r.avg.toFixed(1)})`));
 
   // Phase 3.6: with 3 players the superlative pills render under the final scoreboard
   // (S1's script always produces all three: a unique best turn, at least one 5⭐, raters).
@@ -132,6 +132,21 @@ scenario('S1 happy path: totals/avgs/ranking derived correctly', async ({ page, 
   const bananas = sups.find(s => s.includes('Most Bananas Moment'));
   assert.ok(bananas && bananas.includes(orderedNames[bestIdx]) && bananas.includes('9 ⭐'),
     `bananas award names the 9⭐ performer with the haul (got "${bananas}")`);
+
+  // Fixed corner chrome: while the ACTIVE screen is scrolled away from its top the
+  // Reset/gear/mute buttons bow out (they'd overlap interactive rows), and they are
+  // back the moment scrollTop returns to 0. The 3-player winner screen always
+  // overflows the test viewport, so the scroll here is real.
+  await page.evaluate(() => { document.querySelector('.screen.active').scrollTop = 200; });
+  await page.waitForFunction(() => document.body.classList.contains('scrolled'));
+  assert.strictEqual(await page.$eval('#reset-btn', el => getComputedStyle(el).opacity), '0',
+    'scrolled: the corner chrome fades out');
+  assert.strictEqual(await page.$eval('#reset-btn', el => getComputedStyle(el).pointerEvents), 'none',
+    'scrolled: the corner chrome is untappable (rows underneath win the tap)');
+  await page.evaluate(() => { document.querySelector('.screen.active').scrollTop = 0; });
+  await page.waitForFunction(() => !document.body.classList.contains('scrolled'));
+  assert.strictEqual(await page.$eval('#reset-btn', el => getComputedStyle(el).opacity), '1',
+    'back at the top: the corner chrome returns');
 });
 
 // S2 — R1 regression: Reset during the 3-2-1 countdown (confirm auto-accepted) must
@@ -387,6 +402,10 @@ scenario('S6 partial tie → NUT-OFF resolves one winner; 2-player tie → co-wi
   assert.strictEqual(hofRows.length, 3, 'A2 + both Ann & Ben titles are listed');
   assert.ok(hofRows[0].includes('Ann & Ben') && hofRows[0].includes('3\u00a0⭐'),   // nbsp keeps the ⭐ glued to its count
     `unexpected HOF row: ${hofRows[0]}`);
+  // Reaching #hof-btn may have scrolled the setup screen, and the corner chrome bows
+  // out while scrolled (it would overlap interactive rows) — back to the top, like a
+  // user would, so the gear is tappable again.
+  await page.evaluate(() => { document.querySelector('.screen.active').scrollTop = 0; });
   await page.click('#settings-btn');
   await page.waitForSelector('#settings-sheet:not([hidden])');
   await page.click('#sheet-clear-hof');           // confirm() auto-accepted by the dialog handler
@@ -782,7 +801,7 @@ scenario('S14 rounds=2 reaches roundEnd once; totals accumulate across rounds', 
   const expect1 = Object.entries(totals).map(([name, total]) => ({ name, total }))
     .sort((a, b) => b.total - a.total);
   const lis1 = await page.$$eval('#round-scores li', els => els.map(el => el.textContent.trim()));
-  assert.deepStrictEqual(lis1, expect1.map(r => `${r.name} — ${r.total} ⭐ (avg ${r.total.toFixed(1)})`),
+  assert.deepStrictEqual(lis1, expect1.map(r => `${r.name} — ${r.total}\u00a0⭐ (avg ${r.total.toFixed(1)})`),
     'the running scoreboard shows the round-1 totals');
   assert.strictEqual(await page.evaluate(() => window.__gonuts.getGame().round), 1,
     'the round only bumps on the button, not on roundEnd entry');
@@ -812,7 +831,7 @@ scenario('S14 rounds=2 reaches roundEnd once; totals accumulate across rounds', 
   assert.strictEqual(await text(page, '#winner-name'), expect[0].name);
   assert.strictEqual(await text(page, '#winner-subtitle'), 'CRAZIEST OF THEM ALL');
   const lis = await page.$$eval('#final-scores li', els => els.map(el => el.textContent.trim()));
-  assert.deepStrictEqual(lis, expect.map(r => `${r.name} — ${r.total} ⭐ (avg ${(r.total / 2).toFixed(1)})`));
+  assert.deepStrictEqual(lis, expect.map(r => `${r.name} — ${r.total}\u00a0⭐ (avg ${(r.total / 2).toFixed(1)})`));
 });
 
 // S15 — Custom decks (Phase 4.1): the editor sheet (a real modal, one at a time with the
@@ -892,6 +911,18 @@ scenario('S15 custom deck: editor creates it, game draws from it, delete falls b
   assert.deepStrictEqual(Object.keys(stored2.decks), [deckId], 'edit updates in place — no second deck');
   assert.strictEqual(stored2.decks[deckId].name, NAME2);
 
+  // Deck-name cap: a 30+ char name saves truncated to CONFIG.DECK_NAME_MAX (24) —
+  // fill() bypasses the input's maxlength, so this exercises the save-path slice too.
+  const LONG_NAME = 'The Absolutely Bananas Zoo Deck of Zeal';   // 39 chars
+  await page.click('#deck-manage-list .deck-edit');
+  await page.waitForSelector('#deck-editor-sheet:not([hidden])');
+  await page.fill('#deck-name-input', LONG_NAME);
+  await page.click('#deck-save-btn');
+  await page.waitForSelector('#settings-sheet:not([hidden])');
+  const storedCap = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.decks')));
+  assert.strictEqual(storedCap.decks[deckId].name.length, 24, 'deck name capped at CONFIG.DECK_NAME_MAX');
+  assert.strictEqual(storedCap.decks[deckId].name, LONG_NAME.slice(0, 24), 'the cap keeps the leading 24 chars');
+
   // Select it and play a seeded 2-player game: every drawn prompt is from the custom deck.
   await page.click(`#seg-deck button[data-val="${deckId}"]`);
   assert.strictEqual(await page.getAttribute(`#seg-deck button[data-val="${deckId}"]`, 'aria-pressed'), 'true');
@@ -950,7 +981,10 @@ scenario('S16 share card: Web Share with files, blob download fallback, non-blan
         window.__shareCalls.push({
           files: (data?.files || []).map(f => ({ name: f.name, type: f.type, size: f.size })),
         });
-        return new Promise(r => setTimeout(r, 600)); /* raw-timer-ok: browser-side stub — holds share in flight for the double-tap check */
+        // Pend until the test calls window.__releaseShare(): the in-flight window is
+        // held open for as long as the double-tap assertions need it — deterministic
+        // on any machine speed, unlike a fixed-delay auto-resolve.
+        return new Promise(r => { window.__releaseShare = r; });
       },
     });
     // The download fallback clicks a DETACHED <a download> — capture it instead of navigating.
@@ -965,8 +999,9 @@ scenario('S16 share card: Web Share with files, blob download fallback, non-blan
   await page.waitForSelector('#winner-screen.active');
   assert.ok(await page.isVisible('#share-btn'), 'the Share button lives on the winner screen');
 
-  // Web Share path: two REAL back-to-back taps — the second lands while the stubbed
-  // share() is still pending, so the in-flight flag must swallow it (exactly one call).
+  // Web Share path: two REAL back-to-back taps — the stubbed share() pends until the
+  // test releases it, so the second tap is GUARANTEED to land inside the in-flight
+  // window (no timing dependence) and the flag must swallow it (exactly one call).
   await page.click('#share-btn');
   await page.click('#share-btn');
   const gotShare = await page.evaluate(async () => {
@@ -976,7 +1011,7 @@ scenario('S16 share card: Web Share with files, blob download fallback, non-blan
     return window.__shareCalls.length;
   });
   assert.ok(gotShare >= 1, 'share() was invoked');
-  await page.waitForTimeout(900);            // a leaked second dialog would have landed by now
+  await page.waitForTimeout(900);            // a leaked second pipeline would have landed by now
   const calls = await page.evaluate(() => window.__shareCalls);
   assert.strictEqual(calls.length, 1, `rapid double-tap must produce exactly one share() (got ${calls.length})`);
   assert.strictEqual(calls[0].files.length, 1, 'share() receives exactly one file');
@@ -986,6 +1021,8 @@ scenario('S16 share card: Web Share with files, blob download fallback, non-blan
   assert.strictEqual(await page.evaluate(() => window.__downloads.length), 0,
     'no download anchor while Web Share handles the card');
   assert.strictEqual(await state(page), 'winner', 'share is a pure UI action — the machine never moves');
+  // Double-tap assertions done: settle the held share so its finally lifts the flag.
+  await page.evaluate(() => window.__releaseShare());
 
   // Download fallback: canShare now says no → a detached <a download> click with a blob href.
   await page.evaluate(() => { window.__shareMode = 'none'; });
@@ -1002,24 +1039,36 @@ scenario('S16 share card: Web Share with files, blob download fallback, non-blan
   assert.strictEqual(await page.evaluate(() => window.__shareCalls.length), 1,
     'share() untouched on the fallback path');
 
-  // Direct render assertion: 1080x1350, fully painted, non-uniform pixel data.
+  // Direct render assertion: 1080x1350, fully painted, non-uniform pixel data — and
+  // content-AWARE: a doctored copy of the results (different winner name) must paint
+  // different pixels. Font-agnostic text regression: the renderer is deterministic
+  // (seeded confetti), so any buffer difference can only come from the view-model.
   const cardInfo = await page.evaluate(() => {
     const g = window.__gonuts;
-    const c = g.renderShareCard(g.getResults(g.getGame()));
-    const d = c.getContext('2d');
-    const { data } = d.getImageData(0, 0, c.width, c.height);
+    const results = g.getResults(g.getGame());
+    const c = g.renderShareCard(results);
+    const { data } = c.getContext('2d').getImageData(0, 0, c.width, c.height);
     const seen = new Set();
     let opaque = true;
     for (let i = 0; i < data.length; i += 3989 * 4) {        // prime stride: ~365 samples across the card
       seen.add(`${data[i]},${data[i + 1]},${data[i + 2]}`);
       if (data[i + 3] !== 255) opaque = false;
     }
-    return { w: c.width, h: c.height, distinct: seen.size, opaque };
+    const doctored = JSON.parse(JSON.stringify(results));    // clone unlinks winners from rows
+    doctored.winners[0].name = 'DOCTORED';
+    const c2 = g.renderShareCard(doctored);
+    const data2 = c2.getContext('2d').getImageData(0, 0, c2.width, c2.height).data;
+    let differs = false;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] !== data2[i] || data[i + 1] !== data2[i + 1] || data[i + 2] !== data2[i + 2]) { differs = true; break; }
+    }
+    return { w: c.width, h: c.height, distinct: seen.size, opaque, differs };
   });
   assert.strictEqual(cardInfo.w, 1080, 'card width');
   assert.strictEqual(cardInfo.h, 1350, 'card height');
   assert.ok(cardInfo.distinct > 12, `card pixels must be non-uniform (got ${cardInfo.distinct} distinct sampled colors)`);
   assert.ok(cardInfo.opaque, 'card must be fully painted — no transparent holes');
+  assert.ok(cardInfo.differs, 'a doctored winner name must change the card pixels — the card renders its view-model');
 });
 
 // S17 — Team mode (Phase 4.3): the setup toggle appears at 4 players and auto-balances
@@ -1043,7 +1092,7 @@ scenario('S17 team mode: rater exclusion, team totals, team crown; 2v2 all-tie �
 
   await page.click('#team-toggle');
   assert.strictEqual(await page.getAttribute('#team-toggle', 'aria-pressed'), 'true');
-  assert.strictEqual(await text(page, '#team-toggle'), '🔴🔵 Team mode: On');
+  assert.strictEqual(await text(page, '#team-toggle'), '🔴🔵 Teams: On');
   let badges = await page.$$eval('#player-list .team-badge', els => els.map(el => el.textContent));
   assert.deepStrictEqual(badges, ['🔴', '🔵', '🔴', '🔵'], 'auto-balanced alternating assignment');
 
@@ -1130,9 +1179,9 @@ scenario('S17 team mode: rater exclusion, team totals, team crown; 2v2 all-tie �
     `${teamTotals.t1} ⭐ (avg ${(teamTotals.t1 / 4).toFixed(1)})`);
   const lis = await page.$$eval('#final-scores li', els => els.map(el => el.textContent.trim()));
   assert.strictEqual(lis.length, 2, 'the final scoreboard ranks the two TEAMS');
-  assert.ok(lis[0].startsWith(`🔴 Red Team — ${teamTotals.t1} ⭐`) && lis[0].includes('Ann, Cara'),
+  assert.ok(lis[0].startsWith(`🔴 Red Team — ${teamTotals.t1}\u00a0⭐`) && lis[0].includes('Ann, Cara'),
     `top team row with members (got "${lis[0]}")`);
-  assert.ok(lis[1].startsWith(`🔵 Blue Team — ${teamTotals.t2} ⭐`) && lis[1].includes('Ben, Dan'),
+  assert.ok(lis[1].startsWith(`🔵 Blue Team — ${teamTotals.t2}\u00a0⭐`) && lis[1].includes('Ben, Dan'),
     `runner-up team row with members (got "${lis[1]}")`);
 
   // Superlatives stay per-player (4 players ≥ 3): the pills name players, not teams —
@@ -1149,17 +1198,26 @@ scenario('S17 team mode: rater exclusion, team totals, team crown; 2v2 all-tie �
   });
   assert.ok(resShape.supIds.length && resShape.supIds.every(id => resShape.rosterIds.includes(id)),
     'every superlative playerId resolves through results.roster (the card\'s name path)');
-  const cardInfo = await page.evaluate(() => {     // the card renders team results without blowing up
-    const g = window.__gonuts;
-    const c = g.renderShareCard(g.getResults(g.getGame()));
-    const d = c.getContext('2d');
-    const { data } = d.getImageData(0, 0, c.width, c.height);
+  const cardInfo = await page.evaluate(() => {     // the card renders team results without blowing up —
+    const g = window.__gonuts;                     // and content-aware (same doctored-copy check as S16)
+    const results = g.getResults(g.getGame());
+    const c = g.renderShareCard(results);
+    const { data } = c.getContext('2d').getImageData(0, 0, c.width, c.height);
     const seen = new Set();
     for (let i = 0; i < data.length; i += 3989 * 4) seen.add(`${data[i]},${data[i + 1]},${data[i + 2]}`);
-    return { w: c.width, h: c.height, distinct: seen.size };
+    const doctored = JSON.parse(JSON.stringify(results));    // clone unlinks winners from rows
+    doctored.winners[0].name = 'DOCTORED';
+    const c2 = g.renderShareCard(doctored);
+    const data2 = c2.getContext('2d').getImageData(0, 0, c2.width, c2.height).data;
+    let differs = false;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] !== data2[i] || data[i + 1] !== data2[i + 1] || data[i + 2] !== data2[i + 2]) { differs = true; break; }
+    }
+    return { w: c.width, h: c.height, distinct: seen.size, differs };
   });
   assert.strictEqual(cardInfo.w, 1080); assert.strictEqual(cardInfo.h, 1350);
   assert.ok(cardInfo.distinct > 12, `team share card paints non-uniform pixels (got ${cardInfo.distinct})`);
+  assert.ok(cardInfo.differs, 'a doctored team name must change the card pixels — the card renders its view-model');
 
   // HOF: the entry records team name + members, with the team total.
   const hof = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.hof')));
