@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <title>Go Nuts!</title>
 <style>
   :root {
@@ -38,14 +38,27 @@
     flex-direction: column;
     align-items: safe center;
     justify-content: safe center;
-    padding: 60px 20px 20px;
+    padding: 60px 20px 20px;   /* plain fallback for browsers without env() */
+    padding: calc(60px + env(safe-area-inset-top, 0px))
+             calc(20px + env(safe-area-inset-right, 0px))
+             calc(20px + env(safe-area-inset-bottom, 0px))
+             calc(20px + env(safe-area-inset-left, 0px));
     text-align: center;
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
   }
-  .screen.active { display: flex; }
+  /* Screen entrance (G-UX1): the incoming screen slides up with a springy pop; the
+     outgoing one just cuts (display:none). Animating the section itself never fights
+     the wobble/pulse keyframes on its children (nested transforms compose), and the
+     transform resolves back to none at the end, so overflow scrolling on short
+     viewports is untouched once the 0.28s entrance finishes. */
+  .screen.active { display: flex; animation: screenIn 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+  @keyframes screenIn {
+    from { opacity: 0; transform: translateY(28px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
   .screen > * { flex-shrink: 0; }
   h1 {
     font-size: clamp(48px, 12vw, 140px);
@@ -309,8 +322,30 @@
   }
 
   .small { font-size: 14px; opacity: 0.9; }
-  .footer-btn { position: fixed; top: 12px; left: 12px; z-index: 10;
-                font-size: 16px; padding: 8px 14px; box-shadow: 3px 3px 0 var(--ink); }
+  /* Fixed chrome respects the notch/home-indicator (G-UX7): plain fallbacks first,
+     then env()-aware overrides. #reset-btn sits top-left; the Phase 2 #sound-btn
+     mirrors it top-right via .footer-btn.right. */
+  .footer-btn { position: fixed; z-index: 10;
+                font-size: 16px; padding: 8px 14px; box-shadow: 3px 3px 0 var(--ink);
+                top: 12px;
+                top: calc(12px + env(safe-area-inset-top, 0px)); }
+  #reset-btn { left: 12px; left: calc(12px + env(safe-area-inset-left, 0px)); }
+  .footer-btn.right { right: 12px; right: calc(12px + env(safe-area-inset-right, 0px)); }
+
+  /* A11y (G-UX5): visually-hidden live region + no focus ring on programmatically
+     focused headings (they carry tabindex="-1"; keyboard-tabbable controls keep theirs). */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  [tabindex="-1"]:focus { outline: none; }
+
+  /* REDUCED MOTION (G-UX4): static gradient; no wobble/pulse/bounce/screenIn/pop/etc.
+     Same selector breadth as the .test rule below, but only animations — the ring's
+     stroke transition stays (it conveys time, and it tracks a 200ms repaint anyway). */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; }
+  }
 
   /* TEST MODE (?test=1): kill animations/transitions so Playwright gets stable boxes */
   .test *, .test *::before, .test *::after {
@@ -324,7 +359,7 @@
 
 <!-- SETUP -->
 <section id="setup-screen" class="screen active">
-  <h1>Go Nuts!</h1>
+  <h1 tabindex="-1">Go Nuts!</h1>
   <div class="subtitle">The craziest player wins.</div>
   <div class="panel resume-banner" id="resume-banner" hidden>
     <div class="resume-msg" id="resume-msg">Game in progress.</div>
@@ -348,7 +383,7 @@
 <!-- TURN INTRO -->
 <section id="intro-screen" class="screen">
   <div class="now-up">Next up...</div>
-  <h2 class="name" id="intro-name">—</h2>
+  <h2 class="name" id="intro-name" tabindex="-1">—</h2>
   <div class="subtitle">Get ready to GO NUTS for <span id="intro-secs">…</span> seconds!</div>
   <button id="begin-turn-btn" class="go">I'M READY!</button>
 </section>
@@ -361,14 +396,17 @@
 <!-- TIMER -->
 <section id="timer-screen" class="screen">
   <div class="now-up">Now going nuts:</div>
-  <h2 class="name" id="timer-name">—</h2>
+  <h2 class="name" id="timer-name" tabindex="-1">—</h2>
   <div class="ring-wrap">
     <svg viewBox="0 0 200 200">
       <circle class="ring-bg" cx="100" cy="100" r="90"></circle>
       <circle class="ring-fg" id="ring-fg" cx="100" cy="100" r="90"
               stroke-dasharray="565.48" stroke-dashoffset="0"></circle>
     </svg>
-    <div class="ring-num" id="ring-num">—</div>
+    <div class="ring-num" id="ring-num" aria-hidden="true">—</div>
+    <!-- A11y (G-UX5): screen readers hear only this live region, updated on whole-second
+         edges <= ANNOUNCE_AT_S — the visual number repaints every 200ms and would chatter. -->
+    <div class="sr-only" id="ring-live" aria-live="polite"></div>
   </div>
   <div class="crazy-word" id="crazy-word">LET'S GO!</div>
   <button id="stop-btn" class="danger">Stop</button>
@@ -377,7 +415,7 @@
 <!-- RATING -->
 <section id="rating-screen" class="screen">
   <div class="rating-title">How crazy was</div>
-  <h2 class="rating-name" id="rate-name">—</h2>
+  <h2 class="rating-name" id="rate-name" tabindex="-1">—</h2>
   <div class="rater" id="rater-label">Rater 1 of 1</div>
   <div class="panel">
     <div class="stars" id="stars"></div>
@@ -390,7 +428,7 @@
 <section id="winner-screen" class="screen">
   <div class="crown">👑</div>
   <div class="subtitle" id="winner-subtitle">CRAZIEST OF THEM ALL</div>
-  <h2 class="winner-name" id="winner-name">—</h2>
+  <h2 class="winner-name" id="winner-name" tabindex="-1">—</h2>
   <div class="winner-score" id="winner-score">— stars</div>
   <div class="scoreboard">
     <h3>🏆 Final Scores</h3>
@@ -418,6 +456,7 @@
     REPAINT_MS:     200,                   // ring repaint cadence — cosmetic only, never counts time
     URGENT_AT_S:    3,                     // ring red + urgency cues
     WARN_AT_S:      8,                     // ring orange
+    ANNOUNCE_AT_S:  5,                     // aria-live seconds announcements start here (G-UX5)
     MIN_PLAYERS:    2,
     MAX_NAME_LEN:   14,
     SKIPS_PER_PLAYER: 1,                   // Phase 3 prompt skips
@@ -711,6 +750,11 @@
     document.body.dataset.state = machine.state;
     document.querySelectorAll('.screen').forEach(el =>
       el.classList.toggle('active', el.id === `${name}-screen`));
+    // A11y (G-UX5): move focus to the incoming screen's primary heading so screen
+    // readers announce the new context. Headings carry tabindex="-1" in the markup;
+    // countdown has no heading (transient 3-2-1) and is deliberately skipped.
+    const heading = document.querySelector(`#${name}-screen [tabindex="-1"]`);
+    heading?.focus({ preventScroll: true });
   }
 
   // ---------- SCREENS ----------
@@ -798,6 +842,7 @@
     run.turnTotalMs = turnSecondsForCurrentTurn() * 1000;
     run.turnEndsAt  = Date.now() + run.turnTotalMs;
     run.lastWholeSecond = turnSecondsForCurrentTurn() + 1;
+    $('ring-live').textContent = '';       // fresh turn: clear the stale last announcement
     repaintRing(); cycleWord();
     timers.every(CONFIG.REPAINT_MS, repaintRing);
     timers.every(wordCycleMs(), cycleWord);
@@ -812,8 +857,11 @@
     const ring = $('ring-fg');
     ring.setAttribute('stroke-dashoffset', CONFIG.RING_CIRC * (1 - msLeft / run.turnTotalMs));
     ring.style.stroke = secs <= CONFIG.URGENT_AT_S ? '#ff5252' : secs <= CONFIG.WARN_AT_S ? '#fb8c00' : '#ffeb3b';
-    if (secs !== run.lastWholeSecond) {    // per-second edge — sound/haptic hook
+    if (secs !== run.lastWholeSecond) {    // per-second edge — sound/haptic/announce hook
       run.lastWholeSecond = secs;
+      // Announce only the final seconds (G-UX5): a per-second live region for a whole
+      // 15s turn would be pure screen-reader chatter.
+      if (secs > 0 && secs <= CONFIG.ANNOUNCE_AT_S) $('ring-live').textContent = String(secs);
       if (secs > 0 && secs <= CONFIG.URGENT_AT_S) { audio.play('urgent'); haptics.buzz(40); }
     }
     if (msLeft <= 0) { audio.play('buzzer'); haptics.buzz([80, 60, 80]); endTurn(); }
@@ -857,6 +905,8 @@
       const b = document.createElement('button');
       b.className = 'star' + (i <= currentRating ? ' active' : '');
       b.textContent = '⭐';
+      b.setAttribute('aria-label', i === 1 ? '1 star' : `${i} stars`);   // G-UX5
+      b.setAttribute('aria-pressed', i <= currentRating ? 'true' : 'false');
       b.onclick = () => {
         currentRating = i;
         renderStars();
