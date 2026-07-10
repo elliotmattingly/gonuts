@@ -1282,7 +1282,7 @@
       buzzer:  () => tone(200, 0.6, { type: 'sawtooth', slideTo: 100, gain: 0.22 }),  // time up / Stop
       pop:     (n) => tone(440 + 130 * (n || 1), 0.09, { type: 'triangle' }),// star tap, pitch rises 1..5
       skip:    () => tone(330, 0.14, { slideTo: 200, type: 'triangle' }),    // prompt skip (3.1)
-      nutoff:  () => [392, 392, 392, 311].forEach((f, i) => tone(f, 0.14, { at: i * 0.16 })),  // tie! (P3 — no call site yet)
+      nutoff:  () => [392, 392, 392, 311].forEach((f, i) => tone(f, 0.14, { at: i * 0.16 })),  // tie! (played by enterNutoff)
       fanfare: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, { at: i * 0.13, type: 'triangle' })),  // winner
     };
     return { play(name, arg) { CUES[name]?.(arg); }, unlock: ensure };
