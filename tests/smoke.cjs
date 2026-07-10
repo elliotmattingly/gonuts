@@ -261,6 +261,34 @@ scenario('S8 sound/haptics toggles persist across reload', async ({ page, base }
   assert.strictEqual(await page.getAttribute('#sound-btn', 'aria-label'), 'Unmute sound');
 });
 
+// G-UX8 — Confetti upgrades: a 5-star tap fires a ~30-particle micro-burst anchored at
+// the tapped star (not the full-screen top rain), mixing 🥜 glyph particles in at ~1-in-5,
+// and the canvas visibility gate is widened to the rating state.
+scenario('G-UX8 five-star tap fires an origin micro-burst with 🥜 glyphs', async ({ page, base }) => {
+  await page.goto(base + Q);
+  await startGame(page, ['Ann', 'Ben']);
+  await page.click('#begin-turn-btn');
+  await page.waitForSelector('#rating-screen.active', { timeout: 15000 });
+  assert.ok(await page.$eval('#confetti', el => getComputedStyle(el).display !== 'none'),
+    'confetti canvas must be visible in the rating state (widened CSS gate)');
+  const star = await page.$eval('#stars .star:nth-child(5)', el => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.click('#stars .star:nth-child(5)');
+  const parts = await page.evaluate(() => window.__gonuts.getConfetti());
+  assert.strictEqual(parts.length, 30, `expected a 30-particle micro-burst, got ${parts.length}`);
+  assert.ok(parts.some(p => p.glyph === '🥜'), 'burst mixes 🥜 glyph particles (~1-in-5)');
+  // Origin burst: particles cluster at the tapped star (a few frames of drift allowed),
+  // instead of raining from random x positions across the top of the screen.
+  assert.ok(parts.every(p => Math.abs(p.x - star.x) < 200 && Math.abs(p.y - star.y) < 200),
+    'micro-burst particles must originate at the tapped star');
+  await page.click('#submit-rating-btn');          // the 5-star rating still records normally
+  await page.waitForSelector('#intro-screen.active');
+  const g = await page.evaluate(() => window.__gonuts.getGame());
+  assert.deepStrictEqual(g.turns[0].ratings, { p2: 5 });
+});
+
 // S9 — Illegal-transition fuzz: every from→to edge NOT in the state table must be a
 // guarded no-op (returns false, state unchanged).
 scenario('S9 illegal transitions are all blocked', async ({ page, base }) => {
@@ -302,6 +330,27 @@ scenario('S10 no duplicate DOM ids in index.html', async () => {
   const seen = new Set();
   const dupes = ids.filter(id => seen.has(id) ? true : (seen.add(id), false));
   assert.deepStrictEqual(dupes, [], `duplicate ids: ${dupes.join(', ')}`);
+});
+
+// S11 — PWA (Phase 2): a plain production load (NO ?test — the real contract, SW
+// registration path included, though it self-skips on http:) produces zero console
+// errors, and the manifest + service worker are served from the same origin.
+scenario('S11 PWA: plain load is clean; manifest + sw.js are served', async ({ page, base }) => {
+  await page.goto(base);                          // deliberately no ?test query
+  await page.waitForSelector('#setup-screen.active');
+  const origin = new URL(base).origin;
+  for (const file of ['/manifest.webmanifest', '/sw.js']) {
+    const res = await fetch(origin + file);       // node 22 global fetch
+    assert.strictEqual(res.status, 200, `${file} must return 200 from the test server`);
+  }
+  const manifest = await (await fetch(origin + '/manifest.webmanifest')).json();
+  assert.strictEqual(manifest.name, 'Go Nuts!');
+  assert.strictEqual(manifest.display, 'standalone');
+  assert.ok(manifest.icons.length >= 2 && manifest.icons.every(i => i.src === 'icon.svg'),
+    'manifest ships the icon.svg pair (any + maskable)');
+  const sw = await (await fetch(origin + '/sw.js')).text();
+  assert.ok(sw.includes("'gonuts-static-v1'"), 'sw.js cache name matches the spec');
+  assert.ok(!sw.includes('skipWaiting()'), 'sw.js must never call skipWaiting (no mid-game swaps)');
 });
 
 // ---------- runner ----------

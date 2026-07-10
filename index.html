@@ -4,6 +4,22 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <title>Go Nuts!</title>
+<link rel="icon" href="icon.svg" />
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#ff006e" />
+<meta name="description" content="The pass-the-phone party game where the craziest player wins." />
+<!-- Social cards (G-UX6): unfurlers need absolute URLs, so these point at the Pages deploy. -->
+<meta property="og:title" content="Go Nuts!" />
+<meta property="og:description" content="The pass-the-phone party game where the craziest player wins." />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://elliotmattingly.github.io/gonuts/" />
+<meta property="og:image" content="https://elliotmattingly.github.io/gonuts/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Go Nuts!" />
+<meta name="twitter:description" content="The pass-the-phone party game where the craziest player wins." />
+<meta name="twitter:image" content="https://elliotmattingly.github.io/gonuts/og.png" />
 <style>
   :root {
     --bg1: #ff006e;
@@ -303,9 +319,11 @@
   canvas#confetti {
     position: fixed; inset: 0; pointer-events: none; z-index: 999;
   }
-  /* Only the winner screen shows confetti: a transition away can cancel the rafLoop
-     mid-air, and this keeps any frozen frame from overlaying the next screen. */
-  body:not([data-state="winner"]) canvas#confetti { display: none; }
+  /* Only the winner and rating screens show confetti (winner bursts + the 5-star
+     micro-burst, G-UX8): a transition away can cancel the rafLoop mid-air, and this
+     keeps any frozen frame from overlaying a confetti-less screen. enterRating wipes
+     the canvas so a frozen micro-burst never bleeds into the next rater's turn. */
+  body:not([data-state="winner"]):not([data-state="rating"]) canvas#confetti { display: none; }
 
   /* COUNTDOWN SCREEN (the old ready overlay, promoted to a real screen) */
   #countdown-screen { background: rgba(0,0,0,0.5); }
@@ -965,6 +983,7 @@
     const performer = currentPlayer();
     if (!g || !performer || !g.raterQueue.length) return transition('setup');
     const raterId = g.raterQueue[0];
+    clearConfetti();                       // the previous rater's frozen micro-burst never carries over
     $('rate-name').textContent = performer.name;
     const total = getRaterIds(g, performer.id).length;
     const idx = total - g.raterQueue.length + 1;
@@ -987,6 +1006,10 @@
       b.onclick = () => {
         currentRating = i;
         audio.play('pop', i);              // pitch rises with the star count (DESIGN.md §6)
+        if (i === 5) {                     // top marks → micro-burst from the tapped star (G-UX8)
+          const r = b.getBoundingClientRect();   // measured before renderStars() replaces the node
+          burstConfetti(30, { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+        }
         renderStars();
         $('rating-word').textContent = RATING_WORDS[i - 1];
         $('submit-rating-btn').disabled = false;
@@ -1174,18 +1197,27 @@
   window.addEventListener('resize', resize);
   resize();
 
-  function burstConfetti() {
+  function clearConfetti() {               // fresh canvas: a cancelled loop leaves a frozen frame behind
+    confetti = [];
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // burstConfetti(count, origin) — G-UX8: no origin = full-screen rain from the top
+  // (the winner celebration); an {x, y} origin = a radial pop from that point (the
+  // 5-star micro-burst). ~1-in-5 particles are 🥜 glyphs drawn with fillText + rotation.
+  function burstConfetti(count = 220, origin = null) {
     const colors = ['#ff006e','#fb5607','#ffbe0b','#8338ec','#3a86ff','#00e676','#ffeb3b'];
-    for (let i = 0; i < 220; i++) {
+    for (let i = 0; i < count; i++) {
       confetti.push({
-        x: Math.random() * canvas.width,
-        y: -20 - Math.random() * canvas.height * 0.5,
-        vx: (Math.random() - 0.5) * 6,
-        vy: 2 + Math.random() * 4,
+        x: origin ? origin.x : Math.random() * canvas.width,
+        y: origin ? origin.y : -20 - Math.random() * canvas.height * 0.5,
+        vx: (Math.random() - 0.5) * (origin ? 10 : 6),
+        vy: origin ? -(2 + Math.random() * 6) : 2 + Math.random() * 4,
         size: 6 + Math.random() * 8,
         rot: Math.random() * Math.PI * 2,
         vr: (Math.random() - 0.5) * 0.3,
         color: colors[Math.floor(Math.random() * colors.length)],
+        glyph: Math.random() < 0.2 ? '🥜' : null,
         life: 300 + Math.random() * 200,
       });
     }
@@ -1207,16 +1239,28 @@
         ctx.save();
         ctx.translate(p.x, p.y);
         ctx.rotate(p.rot);
-        ctx.fillStyle = p.color;
-        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+        if (p.glyph) {                     // 🥜 particles spin like the paper ones (G-UX8)
+          ctx.font = `${Math.round(p.size * 2)}px serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(p.glyph, 0, 0);
+        } else {
+          ctx.fillStyle = p.color;
+          ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+        }
         ctx.restore();
       });
     });
   }
 
   // ---------- SW REGISTRATION + BOOT ----------
-  // SW registration lands in Phase 2 (skipped under TEST and on file://).
-  // Registered ONCE at boot (never per-turn): reads run.turnEndsAt from module state, so a
+  // SW (DESIGN.md §9): network-first shell cache, registered only on https — skipped under
+  // TEST and on file://, both of which keep working exactly as today. Registration failure
+  // is swallowed: the SW is pure progressive enhancement.
+  if ('serviceWorker' in navigator && !TEST && location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+  // visibilitychange is registered ONCE at boot (never per-turn): reads run.turnEndsAt from module state, so a
   // return from a hidden tab repaints honestly — and ends the turn if the deadline passed.
   document.addEventListener('visibilitychange', () => { /* raw-timer-ok: permanent listener */
     if (document.hidden) return;
@@ -1235,7 +1279,8 @@
     }
   }
   transition('setup');                     // boot always lands on setup (machine.state null → always legal)
-  if (TEST) window.__gonuts = { machine, timers, transition, getGame: () => game, settings, CONFIG };
+  if (TEST) window.__gonuts = { machine, timers, transition, getGame: () => game, settings, CONFIG,
+                                getConfetti: () => confetti };   // particle peek for the G-UX8 scenario
 })();
 </script>
 </body>
