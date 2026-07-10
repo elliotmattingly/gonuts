@@ -225,6 +225,32 @@
     to   { transform: scale(1) rotate(0); opacity: 1; }
   }
 
+  /* PROMPT DECK (Phase 3): the "Go nuts like…" line on the intro screen + a compact
+     echo above the ring. Text-only on purpose — no panel — so the intro stays a narrow
+     centered action screen and the mascot's corner stays clear (see MASCOT notes). */
+  .prompt-lead {
+    font-size: clamp(18px, 3.5vw, 26px);
+    color: var(--paper);
+    text-shadow: 2px 2px 0 var(--ink);
+  }
+  #intro-prompt-text {
+    font-size: clamp(26px, 6vw, 44px);
+    font-weight: bold;
+    color: #ffeb3b;
+    text-shadow: 3px 3px 0 var(--ink);
+    max-width: min(92vw, 560px);
+    margin: 2px 0 4px;
+    transform: rotate(-1deg);
+  }
+  #skip-prompt-btn { font-size: 17px; padding: 8px 18px; box-shadow: 3px 3px 0 var(--ink); }
+  #timer-screen .name { margin-bottom: 4px; }   /* the prompt line sits tight under the performer */
+  #timer-prompt {
+    font-size: clamp(16px, 3.5vw, 24px);
+    color: var(--paper);
+    text-shadow: 2px 2px 0 var(--ink);
+    max-width: min(92vw, 560px);
+  }
+
   /* RATING SCREEN */
   .rating-title {
     font-size: clamp(24px, 5vw, 38px);
@@ -484,6 +510,9 @@
 <section id="intro-screen" class="screen">
   <div class="now-up">Next up...</div>
   <h2 class="name" id="intro-name" tabindex="-1">—</h2>
+  <div class="prompt-lead">Go nuts like…</div>
+  <div id="intro-prompt-text">—</div>
+  <button id="skip-prompt-btn" hidden>↻ Skip</button>
   <div class="subtitle">Get ready to GO NUTS for <span id="intro-secs">…</span> seconds!</div>
   <button id="begin-turn-btn" class="go">I'M READY!</button>
 </section>
@@ -497,6 +526,7 @@
 <section id="timer-screen" class="screen">
   <div class="now-up">Now going nuts:</div>
   <h2 class="name" id="timer-name" tabindex="-1">—</h2>
+  <div id="timer-prompt">—</div>
   <div class="ring-wrap">
     <svg viewBox="0 0 200 200">
       <circle class="ring-bg" cx="100" cy="100" r="90"></circle>
@@ -716,7 +746,7 @@
     el.style.animation = '';
   }
 
-  function mulberry32(seed) {              // deterministic PRNG — parked here for Phase 3's seeded shuffle
+  function mulberry32(seed) {              // deterministic PRNG for the seeded test shuffle
     let a = seed >>> 0;
     return () => {
       a = (a + 0x6D2B79F5) >>> 0;
@@ -726,8 +756,17 @@
     };
   }
 
-  function shuffle(arr) {                  // Phase 1: identity copy; Phase 3: Fisher-Yates (mulberry32-seeded under TEST)
-    return arr.slice();
+  // One PRNG stream for the whole session: &seed=42 makes every shuffle deterministic,
+  // while successive shuffles (order, drawPile, round restarts) still differ from each other.
+  const rand = TEST_SEED ? mulberry32(TEST_SEED) : Math.random;
+
+  function shuffle(arr) {                  // Fisher-Yates on a copy (Phase 3.2) — mulberry32-seeded under TEST
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
   }
 
   function range(n) { return Array.from({ length: n }, (_, i) => i); }
@@ -746,7 +785,149 @@
     "Bonkers!! 🤪",
     "ABSOLUTELY BANANAS!!! 🍌🤯"
   ];
-  // DECKS (prompt decks) land in Phase 3.
+  // DECKS (DESIGN.md §7): every prompt renders as "Go nuts like… ⟨prompt⟩". ALL prompt
+  // access goes through activeDeck(), which resolves the per-game deckId and merges the
+  // Phase 4 custom-deck storage in UNDER the built-ins (built-in ids always win).
+  const DECKS = {
+    classic: { name: 'Classic', prompts: [
+      "a squirrel who found espresso",
+      "a penguin late for a flight",
+      "a T-rex trying to make a bed",
+      "a rooster who overslept",
+      "a kangaroo stuck in an elevator",
+      "a dog hearing the doorbell for the first time",
+      "a cat stuck in a sweater",
+      "a bee who lost its flowers",
+      "an octopus putting on pants",
+      "a goat discovering stairs",
+      "a chicken crossing a very busy road",
+      "a hamster whose wheel is too fast",
+      "a seagull who spotted your fries",
+      "a horse learning to moonwalk",
+      "a puppy meeting its own tail",
+      "a duck whose pond just froze",
+      "an elephant afraid of a tiny mouse",
+      "a frog auditioning for a rock band",
+      "a moose tangled in holiday lights",
+      "a parrot repeating everything louder",
+      "a turkey who just heard about Thanksgiving",
+      "an ostrich hiding from everything",
+      "a spider whose web keeps breaking",
+      "a fish flopping toward the water",
+      "a raccoon raiding a snack cabinet",
+      "a bull in a china shop",
+      "a sloth trying to hurry",
+      "a woodpecker on a metal pole",
+      "a shark who smells birthday cake",
+      "a mosquito at a swat convention",
+      "a peacock showing off at a party",
+      "a hippo learning ballet",
+      "a snake trying to clap",
+      "a chipmunk with too many acorns in its cheeks",
+      "a lobster escaping the pot",
+      "a sock lost in the dryer looking for its twin",
+      "a popcorn kernel right before it pops",
+      "the last slice of pizza defending itself",
+      "an umbrella turning inside out in the wind",
+      "a toaster launching toast way too high",
+      "a garden hose nobody is holding",
+      "a shopping cart with one wobbly wheel",
+      "an alarm clock furious that you hit snooze",
+      "a fitted sheet refusing to be folded",
+      "a soda bottle that just got shaken up",
+      "an inflatable tube man outside a car dealership",
+      "a mosquito trapped inside a car",
+      "a phone at one percent battery begging for a charger",
+      "a jack-in-the-box that can't wait for the song to end",
+      "a balloon losing all its air at once",
+      "a printer jamming during an important job",
+      "an ice cube dropped down someone's shirt",
+      "a windshield wiper in a hurricane",
+      "a slinky going down an endless staircase",
+      "a lawnmower that won't start on the first pull",
+      "a tea kettle reaching full whistle",
+      "a revolving door going way too fast",
+      "a bowling pin seeing the ball coming",
+      "a blender with the lid left off",
+      "a trampoline meeting its first kid of summer",
+      "an escalator that suddenly becomes stairs",
+      "a pancake being flipped too high",
+      "a washing machine on the spin cycle",
+      "a leaf blower chasing one stubborn leaf",
+      "a mattress being wrestled up a staircase",
+      "a birthday candle refusing to blow out",
+      "a pi\u00f1ata holding on for dear life",
+      "a pool noodle in a sword fight with the wind",
+      "an ice cream cone melting in fast-forward",
+      "a marshmallow expanding in the microwave",
+      "a mime trapped in a shrinking box",
+      "someone walking face-first into a spiderweb",
+      "a slow-motion action hero dodging lasers",
+      "a robot whose batteries are dying",
+      "a cowboy riding an invisible bull",
+      "a scarecrow chasing off its own crows",
+      "a tightrope walker in a windstorm",
+      "a ballerina with the hiccups",
+      "a superhero whose cape is stuck in a door",
+      "a zombie doing jumping jacks",
+      "an opera singer on a trampoline",
+      "a ninja sneaking across a squeaky floor",
+      "a person whose shoes just turned into roller skates",
+      "a caveman seeing fire for the first time",
+      "a puppet whose strings keep tangling",
+      "a firework that keeps almost going off",
+      "a gorilla giving the weather report",
+      "a monkey with an itch it can't reach",
+      "an astronaut on the moon who's late for work",
+      "a dad dancing at a wedding",
+      "a grandma who just won the lottery",
+      "a jellyfish in a hurricane",
+      "a toddler who skipped their nap",
+      "a dog seeing its owner after a year away",
+      "a cat that just spotted a cucumber",
+      "a drummer who lost their drums",
+      "a one-person marching band",
+      "a picnic guest fighting off one fly",
+      "an ice skater who can't stop spinning",
+      "a hiker with ants in their pants",
+      "a mad scientist whose experiment just worked",
+      "a lawn sprinkler in overdrive",
+      "a giraffe learning to limbo",
+      "a barefoot person stepping on a toy brick",
+      "gravity taking the day off",
+      "a sneeze that never quite arrives",
+      "the concept of Monday",
+      "a yawn spreading through a crowd",
+      "wifi trying to reconnect",
+      "static electricity in sock form",
+      "a hiccup that took over a whole body",
+      "an echo lost in a canyon",
+      "a shadow whose person walked away",
+      "the last bubble in a bubble bath",
+      "a whisper trying to become a shout",
+      "the feeling of forgetting a word",
+      "a puddle learning to jump",
+      "the number seven throwing a tantrum",
+      "a lightning bolt with nowhere to strike",
+      "the hokey pokey stuck on repeat",
+      "a snowman discovering summer",
+      "a magnet attracted to everything",
+      "a tumbleweed in rush hour traffic",
+      "the letter Z waking up first",
+      "a raincloud following one person",
+      "the smell of cookies pulling someone across a room",
+      "a broom sweeping itself",
+      "a wave that missed the ocean",
+      "a flamingo who forgot which leg to stand on",
+      "a crab sneaking sideways into a surprise party",
+    ] },
+  };
+
+  function activeDeck(deckId = game?.settings.deckId ?? settings.deckId) {
+    const custom = store.get(KEYS.decks)?.decks || {};   // Phase 4 editor storage shape ({ v, decks })
+    const all = Object.assign({}, custom, DECKS);        // built-ins win over shadowing custom ids
+    return all[deckId] || all.classic;                   // unknown/deleted deck falls back to classic
+  }
 
   // ---------- STORE ----------
   const store = {
@@ -804,7 +985,7 @@
       urgent:  () => tone(1174, 0.06, { gain: 0.16 }),                       // last URGENT_AT_S seconds
       buzzer:  () => tone(200, 0.6, { type: 'sawtooth', slideTo: 100, gain: 0.22 }),  // time up / Stop
       pop:     (n) => tone(440 + 130 * (n || 1), 0.09, { type: 'triangle' }),// star tap, pitch rises 1..5
-      skip:    () => tone(330, 0.14, { slideTo: 200, type: 'triangle' }),    // prompt skip (P3 — no call site yet)
+      skip:    () => tone(330, 0.14, { slideTo: 200, type: 'triangle' }),    // prompt skip (3.1)
       nutoff:  () => [392, 392, 392, 311].forEach((f, i) => tone(f, 0.14, { at: i * 0.16 })),  // tie! (P3 — no call site yet)
       fanfare: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, { at: i * 0.13, type: 'triangle' })),  // winner
     };
@@ -880,17 +1061,21 @@
 
   function newGame(playerNames) {
     const players = playerNames.map((name, i) => ({ id: 'p' + (i + 1), name }));
+    const frozen = Object.freeze({ ...settings });       // frozen snapshot (DESIGN.md §5)
     return {
-      v: 1,                                             // 2 from Phase 3
-      settings: Object.freeze({ ...settings }),          // frozen snapshot (DESIGN.md §5)
+      v: 2,                                              // Phase 3 schema — v1 saves are discarded, never migrated
+      settings: frozen,
       players,                                           // stable ids for the whole game; never key by name
-      order: shuffle(players.map(p => p.id)),            // Phase 1: shuffle() is identity; Phase 3: Fisher-Yates
+      order: shuffle(players.map(p => p.id)),            // Fisher-Yates: fresh order every game (and round, from 3.5)
       round: 1,
       turnIdx: 0,                                        // index into order (or tiebreak.order during NUT-OFF)
       raterQueue: [],                                    // player ids left to rate the current turn
       turns: [],                                         // append-only log — the ONLY source of scoring truth
-        // entry: { performerId:'p2', round:1, nutoff:false, promptIdx:null, ratings:{ p1:4, p3:5 } }
-      // Phase 3 fields (drawPile/currentPromptIdx/skipsUsed/tiebreak) land with the v2 schema.
+        // entry: { performerId:'p2', round:1, nutoff:false, promptIdx:17, ratings:{ p1:4, p3:5 } }
+      drawPile: shuffle(range(activeDeck(frozen.deckId).prompts.length)),  // pre-shuffled prompt indexes; pop() = draw ⇒ no repeats
+      currentPromptIdx: null,                            // drawn in enterIntro; persisted so a resumed turn keeps its prompt
+      skipsUsed: Object.fromEntries(players.map(p => [p.id, 0])),  // per player id, max CONFIG.SKIPS_PER_PLAYER
+      tiebreak: null,                                    // NUT-OFF machinery lands in 3.3; the field ships with v2
       hofRecorded: false,
     };
   }
@@ -957,7 +1142,8 @@
   function openRating() {                  // data op: log the turn entry + build the rater queue
     const g = game;
     const performerId = currentPerformerId();
-    g.turns.push({ performerId, round: g.round, nutoff: !!g.tiebreak, promptIdx: null, ratings: {} });
+    g.turns.push({ performerId, round: g.round, nutoff: !!g.tiebreak, promptIdx: g.currentPromptIdx, ratings: {} });
+    g.currentPromptIdx = null;             // prompt consumed by the log — the next intro draws fresh
     g.raterQueue = getRaterIds(g, performerId);
   }
 
@@ -1079,6 +1265,26 @@
     if (!p) return transition('setup');
     $('intro-name').textContent = p.name;
     $('intro-secs').textContent = turnSecondsForCurrentTurn();
+    if (game.currentPromptIdx == null) drawPrompt();   // a resumed turn keeps its persisted prompt
+    renderIntroPrompt();
+  }
+
+  function drawPrompt() {                  // data op: pop the pre-shuffled pile (DESIGN.md §7)
+    if (!game.drawPile.length) {           // drained mid-game: reshuffle the full range — repeats now unavoidable
+      game.drawPile = shuffle(range(activeDeck().prompts.length));
+    }
+    game.currentPromptIdx = game.drawPile.pop();
+  }
+
+  function promptText(idx) {
+    const d = activeDeck();
+    return d.prompts[idx] ?? d.prompts[0]; // a stale index (deck swapped under a resume) falls back safely
+  }
+
+  function renderIntroPrompt() {           // in-place re-render — skip never navigates (DESIGN.md §7)
+    $('intro-prompt-text').textContent = promptText(game.currentPromptIdx);
+    const p = currentPlayer();
+    $('skip-prompt-btn').hidden = !p || game.skipsUsed[p.id] >= CONFIG.SKIPS_PER_PLAYER;
   }
 
   // -- countdown --
@@ -1119,7 +1325,10 @@
     timers.every(wordCycleMs(), cycleWord);
   }
 
-  function renderPromptLine() {}           // prompt deck lands in Phase 3 (DESIGN.md §7)
+  function renderPromptLine() {            // the prompt stays visible while performing (DESIGN.md §7)
+    $('timer-prompt').textContent =
+      game?.currentPromptIdx != null ? `…like ${promptText(game.currentPromptIdx)}!` : '';
+  }
 
   function repaintRing() {                 // replaces tick() + updateRing()
     const msLeft = Math.max(0, run.turnEndsAt - Date.now());
@@ -1236,6 +1445,18 @@
 
   $('begin-turn-btn').onclick = () => transition('countdown');
 
+  // Prompt skip (3.1): pure data op + in-place re-render — deliberately NOT a transition
+  // (the intro screen stays put), so it saves explicitly like the other roster/rating ops.
+  $('skip-prompt-btn').onclick = () => {
+    const p = currentPlayer();
+    if (!game || !p || game.skipsUsed[p.id] >= CONFIG.SKIPS_PER_PLAYER) return;
+    game.skipsUsed[p.id]++;
+    drawPrompt();
+    audio.play('skip');
+    renderIntroPrompt();
+    saveGame();                            // prompt skips persist (DESIGN.md §4 table)
+  };
+
   $('stop-btn').onclick = endTurn;
 
   $('submit-rating-btn').onclick = () => {
@@ -1328,17 +1549,17 @@
     if (!machine.state) return;
     const phase = STATES[machine.state].resume ?? machine.state;
     if (!game || phase === 'setup') {      // setup phase: roster-only snapshot, restored silently on reload
-      if (roster.length) store.set(KEYS.game, { v: 1, savedAt: Date.now(), phase: 'setup', roster: roster.slice(), game: null });
+      if (roster.length) store.set(KEYS.game, { v: 2, savedAt: Date.now(), phase: 'setup', roster: roster.slice(), game: null });
       else store.del(KEYS.game);
       return;
     }
-    store.set(KEYS.game, { v: 1, savedAt: Date.now(), phase, game });
+    store.set(KEYS.game, { v: 2, savedAt: Date.now(), phase, game });
   }
 
   function loadSnapshot() {                // BOOT-only: returns a valid snapshot or silently discards it
     const snap = store.get(KEYS.game);
     if (!snap) return null;
-    const ok = snap.v === 1                // no migration code, ever — games last minutes
+    const ok = snap.v === 2                // no migration code, ever — games last minutes; v1 saves are silently discarded
       && typeof snap.savedAt === 'number'
       && Date.now() - snap.savedAt <= CONFIG.RESUME_MAX_AGE_MS
       && (snap.phase === 'setup'

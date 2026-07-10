@@ -90,15 +90,22 @@ const scenario = (name, fn) => scenarios.push([name, fn]);
 // S1 — Happy path: 3 players → full game with scripted mixed ratings → winner.
 scenario('S1 happy path: totals/avgs/ranking derived correctly', async ({ page, base }) => {
   const names = ['Alice', 'Bob', 'Cara'];
-  const ratingsByTurn = [[3, 5], [2, 2], [5, 4]];   // performer order = join order in Phase 1
+  const ratingsByTurn = [[3, 5], [2, 2], [5, 4]];   // scripted per TURN — the performer order is shuffled from Phase 3
   await page.goto(base + Q);
   await startGame(page, names);
+  // Phase 3.2: read the seeded Fisher-Yates order off the page and pair each turn's
+  // scripted ratings with its ACTUAL performer (expectations stay independently derived).
+  const orderedNames = await page.evaluate(() => {
+    const g = window.__gonuts.getGame();
+    return g.order.map(id => g.players.find(p => p.id === id).name);
+  });
+  assert.deepStrictEqual([...orderedNames].sort(), [...names].sort(), 'order is a permutation of the roster');
   for (const ratings of ratingsByTurn) await playTurn(page, ratings);
   await page.waitForSelector('#winner-screen.active');
   assert.strictEqual(await state(page), 'winner');
 
   // Recompute expectations here, independently of the page (scores are always derived).
-  const rows = names.map((name, i) => {
+  const rows = orderedNames.map((name, i) => {
     const r = ratingsByTurn[i];
     const total = r.reduce((a, b) => a + b, 0);
     return { name, total, avg: total / r.length };
@@ -166,25 +173,35 @@ scenario('S4 wall-clock turn length is honest', async ({ page, base }) => {
 scenario('S5 reload mid-rating: resume restores, discard keeps roster', async ({ page, base }) => {
   await page.goto(base + Q);
   await startGame(page, ['Ann', 'Ben']);
-  await playTurn(page, [4]);                      // Ann performs, Ben rates 4
+  // Phase 3.2: performer order is shuffled — resolve who actually goes first/second.
+  const order = await page.evaluate(() => {
+    const g = window.__gonuts.getGame();
+    return g.order.map(id => ({ id, name: g.players.find(p => p.id === id).name }));
+  });
+  const [first, second] = order;
+  await playTurn(page, [4]);                      // first performs, second rates 4
   await page.waitForSelector('#intro-screen.active');
-  await page.click('#begin-turn-btn');            // Ben's turn
+  await page.click('#begin-turn-btn');            // second player's turn
   await page.waitForSelector('#rating-screen.active', { timeout: 15000 });
 
   await page.reload();
   await page.waitForSelector('#setup-screen.active');
   const banner = await page.waitForSelector('#resume-banner:not([hidden])');
   const msg = (await banner.textContent()).trim();
-  assert.ok(msg.includes('2 players') && msg.includes('Ben up next'), `unexpected banner: ${msg}`);
+  assert.ok(msg.includes('2 players') && msg.includes(`${second.name} up next`), `unexpected banner: ${msg}`);
 
   await page.click('#resume-btn');
   await page.waitForSelector('#rating-screen.active');
   assert.strictEqual(await state(page), 'rating');
-  assert.strictEqual(await text(page, '#rate-name'), 'Ben');
-  assert.ok((await text(page, '#rater-label')).includes('Ann'), 'Ann rates Ben after resume');
+  assert.strictEqual(await text(page, '#rate-name'), second.name);
+  assert.ok((await text(page, '#rater-label')).includes(first.name), `${first.name} rates ${second.name} after resume`);
   const g = await page.evaluate(() => window.__gonuts.getGame());
   assert.strictEqual(g.turns.length, 2, 'both turn entries survived the reload');
-  assert.deepStrictEqual(g.turns[0].ratings, { p2: 4 }, "Ann's recorded rating survived the reload");
+  assert.deepStrictEqual(g.turns[0].ratings, { [second.id]: 4 }, 'the recorded rating survived the reload');
+  // Phase 3.1: the persisted prompt — every logged turn carries the promptIdx it drew.
+  assert.ok(g.turns.every(t => typeof t.promptIdx === 'number'),
+    `turn entries record promptIdx (got ${JSON.stringify(g.turns.map(t => t.promptIdx))})`);
+  assert.notStrictEqual(g.turns[0].promptIdx, g.turns[1].promptIdx, 'the two turns drew different prompts');
 
   await page.reload();                            // now exercise the Discard path
   await page.waitForSelector('#resume-banner:not([hidden])');
@@ -303,7 +320,8 @@ scenario('G-UX8 five-star tap fires an origin micro-burst with 🥜 glyphs', asy
   await page.click('#submit-rating-btn');          // the 5-star rating still records normally
   await page.waitForSelector('#intro-screen.active');
   const g = await page.evaluate(() => window.__gonuts.getGame());
-  assert.deepStrictEqual(g.turns[0].ratings, { p2: 5 });
+  const raterId = g.players.map(p => p.id).find(id => id !== g.turns[0].performerId);  // order is shuffled from Phase 3
+  assert.deepStrictEqual(g.turns[0].ratings, { [raterId]: 5 });
 });
 
 // S9 — Illegal-transition fuzz: every from→to edge NOT in the state table must be a
@@ -368,6 +386,67 @@ scenario('S11 PWA: plain load is clean; manifest + sw.js are served', async ({ p
   const sw = await (await fetch(origin + '/sw.js')).text();
   assert.ok(sw.includes("'gonuts-static-v1'"), 'sw.js cache name matches the spec');
   assert.ok(!sw.includes('skipWaiting()'), 'sw.js must never call skipWaiting (no mid-game swaps)');
+});
+
+// S12 — Prompt no-repeat + skip budget (Phase 3.1/3.2): every drawn prompt (used or
+// skipped away) is unique across the whole seeded game; the prompt shows on BOTH the
+// intro and timer screens; the persisted currentPromptIdx survives a mid-intro reload;
+// and the one-per-player skip hides the button after use — for that player only.
+scenario('S12 prompts unique across turns; skip budget is per player', async ({ page, base }) => {
+  await page.goto(base + Q);
+  await startGame(page, ['Ann', 'Ben', 'Cai']);
+  const drawn = [];
+
+  // Turn 1 intro: a prompt is up and the skip button is available.
+  const first = await text(page, '#intro-prompt-text');
+  assert.ok(first.length > 3, `intro shows a prompt (got "${first}")`);
+  assert.ok(await page.$eval('#skip-prompt-btn', el => !el.hidden), 'skip button visible before use');
+  drawn.push(first);
+
+  // Skip: a different prompt renders in place (no navigation), and the button is gone.
+  await page.click('#skip-prompt-btn');
+  const second = await text(page, '#intro-prompt-text');
+  assert.notStrictEqual(second, first, 'skip draws a different prompt');
+  assert.strictEqual(await state(page), 'intro', 'skip re-renders in place — never navigates');
+  assert.ok(await page.$eval('#skip-prompt-btn', el => el.hidden), 'skip button disappears after the one allowed use');
+  drawn.push(second);
+
+  // Reload mid-intro: currentPromptIdx rides the snapshot, so Resume keeps the prompt.
+  await page.reload();
+  await page.waitForSelector('#resume-banner:not([hidden])');
+  await page.click('#resume-btn');
+  await page.waitForSelector('#intro-screen.active');
+  assert.strictEqual(await text(page, '#intro-prompt-text'), second, 'resume keeps the same drawn prompt');
+  assert.ok(await page.$eval('#skip-prompt-btn', el => el.hidden), 'the spent skip budget survives the reload');
+
+  // The timer screen echoes the same prompt while performing.
+  await page.click('#begin-turn-btn');
+  await page.waitForSelector('#timer-screen.active');
+  assert.ok((await text(page, '#timer-prompt')).includes(second), 'timer screen renders the prompt line');
+  await page.waitForSelector('#rating-screen.active', { timeout: 15000 });
+  for (const stars of [4, 4]) {
+    await page.click(`#stars .star:nth-child(${stars})`);
+    await page.click('#submit-rating-btn');
+  }
+
+  // Turns 2 and 3: fresh unique prompts, and the OTHER players still have their skip.
+  for (let turn = 2; turn <= 3; turn++) {
+    await page.waitForSelector('#intro-screen.active');
+    const prompt = await text(page, '#intro-prompt-text');
+    assert.ok(!drawn.includes(prompt), `turn ${turn} prompt "${prompt}" repeats an earlier draw`);
+    drawn.push(prompt);
+    assert.ok(await page.$eval('#skip-prompt-btn', el => !el.hidden),
+      `turn ${turn}'s performer keeps their skip (budget is per player, not per game)`);
+    await playTurn(page, [3, 5]);
+  }
+  await page.waitForSelector('#winner-screen.active');
+
+  // The log recorded a numeric promptIdx per turn, all unique (drawPile pop ⇒ no repeats).
+  const g = await page.evaluate(() => window.__gonuts.getGame());
+  const idxs = g.turns.map(t => t.promptIdx);
+  assert.ok(idxs.every(i => typeof i === 'number'), `turn entries record promptIdx (got ${JSON.stringify(idxs)})`);
+  assert.strictEqual(new Set(idxs).size, idxs.length, 'recorded prompt indexes are unique');
+  assert.strictEqual(new Set(drawn).size, drawn.length, 'every prompt shown was unique');
 });
 
 // ---------- runner ----------
