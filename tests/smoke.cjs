@@ -236,8 +236,12 @@ scenario('S5 reload mid-rating: resume rewinds to pass, discard keeps roster', a
 
 // S6 — Ties (Phase 3 form): a PARTIAL top tie goes to sudden death — the nutoff screen
 // announces the contenders, the shorter NUT-OFF turns are rated by non-contenders only,
-// and the nutoffOnly totals crown a unique winner. An ALL-player tie (here: 2 players)
-// has no neutral raters, so it still renders the Phase 1 co-winner form.
+// and the nutoffOnly totals crown a unique winner (Part A) — or, still tied, BOTH
+// contenders as co-winners (Part A2, the sorted[0] bug class hard invariant 4 bans).
+// An ALL-player tie (here: 2 players) has no neutral raters, so it still renders the
+// Phase 1 co-winner form (Part B). Also under S6: the crew-title callout (first title
+// silent, second title announced), the HOF list/clear paths, and — on a plain (no ?test)
+// load, where TEST_TURN can't mask it — the shorter NUTOFF_SECONDS turn length.
 scenario('S6 partial tie → NUT-OFF resolves one winner; 2-player tie → co-winners', async ({ page, base }) => {
   // ---- Part A: 3 players, two tied at the top → NUT-OFF ----
   await page.goto(base + Q);
@@ -299,8 +303,40 @@ scenario('S6 partial tie → NUT-OFF resolves one winner; 2-player tie → co-wi
   hof = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.hof')));
   assert.strictEqual(hof.entries.length, 1, 'a winner-screen refresh never double-writes the HOF');
 
-  // ---- Part B: a 2-player dead tie (ALL players tied → no neutral raters) ----
+  // ---- Part A2: a STILL-TIED nut-off resolves to CO-winners (never sorted[0]) ----
+  // Same seeded 5/5/2 setup as Part A, but the single neutral rater scores both
+  // sudden-death turns equally — the nutoffOnly totals stay tied, and getResults must
+  // keep BOTH contenders (hard invariant 4: an arbitrary contenders[0] crown is banned).
   await page.evaluate(() => localStorage.clear());
+  await page.goto(base + Q);
+  await startGame(page, ['Ann', 'Ben', 'Cai']);
+  for (const ratings of [[3, 2], [4, 1], [1, 1]]) await playTurn(page, ratings);
+  await page.waitForSelector('#nutoff-screen.active');
+  const stillTied = await page.evaluate(() => {
+    const g = window.__gonuts.getGame();
+    return g.tiebreak.contenders.map(id => g.players.find(p => p.id === id).name);
+  });
+  await page.click('#nutoff-btn');
+  await page.waitForSelector('#intro-screen.active');
+  await playTurn(page, [4]);
+  await page.waitForSelector('#intro-screen.active');
+  await playTurn(page, [4]);                      // 4 vs 4 — the nut-off itself dead-ties
+  await page.waitForSelector('#winner-screen.active');
+  assert.strictEqual(await text(page, '#winner-subtitle'), 'CO-CRAZIEST OF THEM ALL',
+    'a still-tied nut-off celebrates co-winners');
+  const coName = await text(page, '#winner-name');
+  assert.ok(stillTied.every(n => coName.includes(n)) && coName.includes(' & '),
+    `both still-tied contenders share the crown (got "${coName}")`);
+  const hofA2 = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.hof')));
+  assert.deepStrictEqual([...hofA2.entries[0].winners].sort(), [...stillTied].sort(),
+    'both co-winners enter the HOF');
+  assert.strictEqual(hofA2.entries[0].hadNutoff, true);
+
+  // ---- Part B: a 2-player dead tie (ALL players tied → no neutral raters) ----
+  // Deliberately KEEP Part A2's HOF entry (a DIFFERENT crew): the crew-title callout
+  // below must count only entries whose crewKey matches — another crew's title on the
+  // books must never light "2nd title" for a brand-new crew.
+  await page.evaluate(() => localStorage.removeItem('gonuts.game'));
   await page.goto(base + Q);
   await startGame(page, ['Ann', 'Ben']);
   await playTurn(page, [3]);
@@ -311,8 +347,13 @@ scenario('S6 partial tie → NUT-OFF resolves one winner; 2-player tie → co-wi
   assert.strictEqual(await text(page, '#winner-name'), 'Ann & Ben');
   assert.ok(await page.$eval('#superlatives', el => el.hidden), 'superlatives stay hidden below 3 players');
   const hofB = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.hof')));
+  assert.strictEqual(hofB.entries.length, 2, 'Part A2\'s different-crew entry is still on the books');
   assert.deepStrictEqual(hofB.entries[0].winners, ['Ann', 'Ben'], 'co-winners both enter the HOF');
   assert.strictEqual(hofB.entries[0].hadNutoff, false);
+  // Crew callout (3.7): a FIRST title stays silent — and Part A2's other-crew entry
+  // must not count toward this crew's streak (the count is crewKey-filtered).
+  assert.ok(await page.$eval('#crew-line', el => el.hidden),
+    'no crew callout on a first title, even with another crew in the HOF');
 
   // Reload on the winner screen: the banner must say the game FINISHED (no bogus
   // "in progress"/"? up next"), and Resume must re-show the winner screen.
@@ -326,14 +367,26 @@ scenario('S6 partial tie → NUT-OFF resolves one winner; 2-player tie → co-wi
   await page.waitForSelector('#winner-screen.active');
   assert.strictEqual(await text(page, '#winner-name'), 'Ann & Ben');
 
+  // ---- Crew callout, second title (3.7): Play Again, same crew ties again ----
+  await page.click('#play-again-btn');
+  await page.waitForSelector('#intro-screen.active');
+  await playTurn(page, [3]);
+  await page.waitForSelector('#intro-screen.active');
+  await playTurn(page, [3]);                      // another dead tie — title #2 for Ann & Ben
+  await page.waitForSelector('#winner-screen.active');
+  assert.ok(await page.$eval('#crew-line', el => !el.hidden), 'the second title lights the crew callout');
+  assert.strictEqual(await text(page, '#crew-line'), '👑 2nd title for this crew!',
+    'the callout carries the crewKey-filtered count and its ordinal');
+
   // ---- Hall of Fame toggle on setup (3.7) + "clear history" in the settings sheet ----
   await page.click('#new-game-btn');
   await page.waitForSelector('#setup-screen.active');
   await page.click('#hof-btn');
   await page.waitForSelector('#hof-panel:not([hidden])');
   const hofRows = await page.$$eval('#hof-list li', els => els.map(el => el.textContent.trim()));
-  assert.strictEqual(hofRows.length, 1);
-  assert.ok(hofRows[0].includes('Ann & Ben') && hofRows[0].includes('3 ⭐'), `unexpected HOF row: ${hofRows[0]}`);
+  assert.strictEqual(hofRows.length, 3, 'A2 + both Ann & Ben titles are listed');
+  assert.ok(hofRows[0].includes('Ann & Ben') && hofRows[0].includes('3\u00a0⭐'),   // nbsp keeps the ⭐ glued to its count
+    `unexpected HOF row: ${hofRows[0]}`);
   await page.click('#settings-btn');
   await page.waitForSelector('#settings-sheet:not([hidden])');
   await page.click('#sheet-clear-hof');           // confirm() auto-accepted by the dialog handler
@@ -342,6 +395,40 @@ scenario('S6 partial tie → NUT-OFF resolves one winner; 2-player tie → co-wi
     'clear history wipes gonuts.hof');
   assert.strictEqual(await page.$$eval('#hof-list li', els => els.length), 0, 'the open HOF list re-renders empty');
   assert.ok(await page.$eval('#hof-empty', el => !el.hidden), 'the empty message shows after clearing');
+
+  // ---- NUT-OFF turns are actually SHORTER (CONFIG.NUTOFF_SECONDS) ----
+  // TEST mode always forces TEST_TURN >= 1s, so a ?test load can never show the
+  // tiebreak-shortened length — deleting the Math.min branch would stay green above.
+  // Same pattern as S8's plain-load leg: seed a mid-tiebreak v2 snapshot, resume it on
+  // a PLAIN load (reduced motion keeps clicks hit-testable), and read the intro copy —
+  // never the wall clock. Deliberately do NOT play the 10s turn.
+  await page.evaluate(() => {
+    localStorage.clear();
+    const players = [{ id: 'p1', name: 'Ann' }, { id: 'p2', name: 'Ben' }, { id: 'p3', name: 'Cai' }];
+    const game = {
+      v: 2,
+      settings: { v: 1, turnSeconds: 15, rounds: 1, sound: true, haptics: true, deckId: 'classic' },
+      players,
+      order: ['p1', 'p2', 'p3'],
+      round: 1, turnIdx: 3,
+      raterQueue: [],
+      turns: [],
+      drawPile: [0, 1, 2, 3, 4],
+      currentPromptIdx: null,
+      skipsUsed: { p1: 0, p2: 0, p3: 0 },
+      tiebreak: { contenders: ['p1', 'p2'], order: ['p1', 'p2'], turnIdx: 0 },
+      hofRecorded: false,
+    };
+    localStorage.setItem('gonuts.game', JSON.stringify({ v: 2, savedAt: Date.now(), phase: 'intro', game }));
+  });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(base);                          // no ?test → the tiebreak branch decides the length
+  await page.waitForSelector('#resume-banner:not([hidden])');
+  await page.click('#resume-btn');
+  await page.waitForSelector('#intro-screen.active');
+  assert.ok(await page.$eval('#intro-nutoff', el => !el.hidden), 'the resumed intro shows the NUT-OFF banner');
+  assert.strictEqual(await text(page, '#intro-secs'), '10',
+    'sudden-death turns run the shorter NUTOFF_SECONDS length, not the 15s game setting');
 });
 
 // S7 — Duplicate/empty name feedback: visible message, roster unchanged.

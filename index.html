@@ -226,8 +226,9 @@
   }
 
   /* PROMPT DECK (Phase 3): the "Go nuts like…" line on the intro screen + a compact
-     echo above the ring. Text-only on purpose — no panel — so the intro stays a narrow
-     centered action screen and the mascot's corner stays clear (see MASCOT notes). */
+     echo above the ring. Text-only on purpose — no panel — but the prompt/skip/pill
+     stack made the intro tall enough to reach the mascot's corner on small phones,
+     so intro joins the mascot reserve/bow-out lists (see MASCOT notes). */
   .prompt-lead {
     font-size: clamp(18px, 3.5vw, 26px);
     color: var(--paper);
@@ -252,10 +253,15 @@
   }
 
   /* PASS SCREEN (Phase 3.4): the private-rating hand-off interstitial. Same header
-     stack as the timer screen; a compact centered action screen (no panel), so the
-     mascot's bottom-left corner stays clear — no reserve padding needed, and the
-     pose-watch rule for body[data-state="pass"] was pre-wired in Phase 2. */
+     stack as the timer screen; a compact centered action screen (no panel). Its tall
+     button stack DOES reach the mascot's corner on small phones, so it joins the
+     mascot reserve/bow-out lists below; the pose-watch rule for
+     body[data-state="pass"] was pre-wired in Phase 2. */
   #pass-screen .pass-emoji { font-size: clamp(64px, 16vw, 120px); }
+  #pass-rate-btn {
+    max-width: 100%;           /* a max-length name at the 28px clamp floor beats 320px — never overflow the screen */
+    overflow-wrap: anywhere;   /* …and an unbreakable 14-char name wraps instead of clipping mid-word */
+  }
   #pass-screen .now-up {
     font-size: clamp(28px, 6vw, 48px);
     color: var(--paper);
@@ -283,8 +289,9 @@
   #roundend-screen .scoreboard { margin-top: 16px; }
 
   /* NUT-OFF (Phase 3.3): the sudden-death tie announcement. A compact centered action
-     screen (no panel) like pass-screen, so the mascot's corner stays clear — no reserve
-     padding needed and no bow-out list entry. */
+     screen (no panel) like pass-screen — and like pass-screen its title/names/button
+     stack reaches the mascot's corner on small phones, so it joins the mascot
+     reserve/bow-out lists below. */
   .nutoff-title {
     font-size: clamp(30px, 8vw, 60px);
     color: #ffeb3b;
@@ -472,12 +479,16 @@
     width: clamp(88px, 26vmin, 120px); height: auto;
     animation: mascotBob 2.6s ease-in-out infinite;
   }
-  /* Panel screens reserve the mascot's corner: their wide panels would otherwise sit
-     on top of the peanut (it paints under screens, so it vanishes head-first). The
-     reserve tracks the mascot's own clamp() so small phones give up less space; the
-     action screens (intro/countdown/timer) keep the compact padding — their content
-     is narrow and centered, so the corner is already clear of buttons. */
-  #setup-screen, #rating-screen, #roundend-screen, #winner-screen {
+  /* Screens whose content can reach the corner reserve the mascot's corner: their
+     panels/buttons would otherwise sit on top of the peanut (it paints under screens,
+     so it vanishes head-first). The reserve tracks the mascot's own clamp() so small
+     phones give up less space. Phase 3 content growth pulled intro (prompt + skip +
+     pills), pass (tall dynamic-label button), and nutoff (title/names/button stack)
+     into the corner on 320px-class viewports, so they joined the lists; only
+     countdown (bare centered number; mascot pops ABOVE it) and timer (ring is
+     centered, Stop is narrow) still keep the compact padding. */
+  #setup-screen, #intro-screen, #pass-screen, #rating-screen,
+  #roundend-screen, #nutoff-screen, #winner-screen {
     padding-bottom: 134px;
     padding-bottom: calc(clamp(88px, 26vmin, 120px) + 14px + env(safe-area-inset-bottom, 0px));
   }
@@ -504,11 +515,15 @@
      roster render, and resize; on the panel states the peanut then bows out and the
      reserve is returned. Poses remain pure body[data-state] CSS (G-UX3). */
   body.crowded[data-state="setup"] #mascot,
+  body.crowded[data-state="intro"] #mascot,
+  body.crowded[data-state="pass"] #mascot,
   body.crowded[data-state="rating"] #mascot,
   body.crowded[data-state="roundEnd"] #mascot,
+  body.crowded[data-state="nutoff"] #mascot,
   body.crowded[data-state="winner"] #mascot { display: none; }
-  body.crowded #setup-screen, body.crowded #rating-screen,
-  body.crowded #roundend-screen, body.crowded #winner-screen {
+  body.crowded #setup-screen, body.crowded #intro-screen, body.crowded #pass-screen,
+  body.crowded #rating-screen, body.crowded #roundend-screen,
+  body.crowded #nutoff-screen, body.crowded #winner-screen {
     padding-bottom: 20px;
     padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
   }
@@ -544,6 +559,14 @@
     padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
     text-align: center;
     animation: sheetUp 0.22s ease;
+    /* The Phase 3 pickers made the sheet taller than short/landscape viewports; a
+       bottom-anchored panel clips off the TOP, so without this the turn/rounds/deck
+       rows would be unreachable (no scroll). Cap it to the viewport and scroll inside. */
+    max-height: 100vh;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
   @keyframes sheetUp {
     from { transform: translateY(40px); opacity: 0; }
@@ -690,7 +713,9 @@
 
 <!-- NUT-OFF (Phase 3.3: sudden-death tie announcement — owns no timers; its button is the only exit) -->
 <section id="nutoff-screen" class="screen">
-  <h2 class="nutoff-title" id="nutoff-title" tabindex="-1">🥜 IT'S A NUT-OFF! 🥜</h2>
+  <!-- &nbsp; glues each 🥜 to its neighboring word so a narrow viewport never orphan-wraps
+       a lone peanut onto its own line (the S6 title assertion matches the inner text). -->
+  <h2 class="nutoff-title" id="nutoff-title" tabindex="-1">🥜&nbsp;IT'S A NUT-OFF!&nbsp;🥜</h2>
   <div id="nutoff-names">—</div>
   <div class="subtitle">Dead tie! Shorter turns — the rest of the crew decides.</div>
   <button id="nutoff-btn" class="go">BREAK THE TIE!</button>
@@ -1486,7 +1511,7 @@
     ol.innerHTML = '';
     for (const e of entries) {
       const li = document.createElement('li');
-      li.textContent = `${e.winners.join(' & ')} — ${e.stars} ⭐`;
+      li.textContent = `${e.winners.join(' & ')} — ${e.stars}\u00a0⭐`;   // nbsp: never orphan-wrap a lone ⭐
       const sub = document.createElement('span');
       sub.className = 'small';
       sub.textContent = `${e.players.length} players · ${e.rounds} round${e.rounds === 1 ? '' : 's'}`
@@ -1787,7 +1812,10 @@
   });
 
   startBtn.onclick = () => {
-    if (roster.length < CONFIG.MIN_PLAYERS) return;
+    // State guard: a double fire's `game = newGame(...)` would land AFTER enterIntro
+    // drew the first prompt — the live game would start promptless while the intro
+    // shows the discarded game's performer (the blocked transition can't stop the mutation).
+    if (machine.state !== 'setup' || roster.length < CONFIG.MIN_PLAYERS) return;
     pendingResume = null;                  // starting fresh abandons any undecided snapshot
     game = newGame(roster.slice());
     transition('intro');
@@ -1813,7 +1841,10 @@
   $('pass-rate-btn').onclick = () => transition('rating');
 
   $('submit-rating-btn').onclick = () => {
-    if (!currentRating || !game?.raterQueue.length) return;
+    // The state guard makes a same-task double fire harmless: advance()'s transition
+    // would already be blocked, but the queue shift + rating write before it wouldn't —
+    // the second fire would steal the NEXT rater's rating (same hazard as #next-round-btn).
+    if (machine.state !== 'rating' || !currentRating || !game?.raterQueue.length) return;
     const raterId = game.raterQueue.shift();
     game.turns.at(-1).ratings[raterId] = currentRating;
     saveGame();                            // each recorded rating persists (DESIGN.md §4)
@@ -1845,6 +1876,7 @@
   };
 
   $('play-again-btn').onclick = () => {    // fresh game, same crew (order reshuffles from Phase 3)
+    if (machine.state !== 'winner' || !game) return;   // same double-fire hazard as startBtn: never replace a game enterIntro already drew into
     game = newGame(game.players.map(p => p.name));
     transition('intro');
   };
