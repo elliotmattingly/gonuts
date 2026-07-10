@@ -233,6 +233,34 @@ scenario('S7 duplicate/empty name gives feedback', async ({ page, base }) => {
   assert.strictEqual(await page.$$eval('#player-list li', els => els.length), 1);
 });
 
+// S8 — Settings persist (Phase 2 form): toggle sound off via the fixed #sound-btn,
+// reload, and the persisted gonuts.settings + the button's muted state must survive.
+// (Phase 3 extends this with the turn-length picker.)
+scenario('S8 sound/haptics toggles persist across reload', async ({ page, base }) => {
+  await page.goto(base + Q);
+  assert.strictEqual(await text(page, '#sound-btn'), '🔊');
+  assert.strictEqual(await page.getAttribute('#sound-btn', 'aria-label'), 'Mute sound');
+  await page.click('#sound-btn');
+  assert.strictEqual(await text(page, '#sound-btn'), '🔇');
+
+  // The gear opens the sheet (visible on setup); haptics toggles there; backdrop tap closes.
+  await page.click('#settings-btn');
+  await page.waitForSelector('#settings-sheet:not([hidden])');
+  assert.strictEqual(await text(page, '#sheet-sound'), '🔇 Sound: Off');   // sheet mirrors the corner button
+  await page.click('#sheet-haptics');
+  assert.strictEqual(await text(page, '#sheet-haptics'), '📴 Haptics: Off');
+  await page.click('#sheet-backdrop', { position: { x: 10, y: 10 } });     // backdrop tap closes the sheet
+  assert.strictEqual(await page.$('#settings-sheet:not([hidden])'), null);
+
+  await page.reload();
+  await page.waitForSelector('#setup-screen.active');
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.settings')));
+  assert.strictEqual(stored.sound, false, 'gonuts.settings persisted sound:false');
+  assert.strictEqual(stored.haptics, false, 'gonuts.settings persisted haptics:false');
+  assert.strictEqual(await text(page, '#sound-btn'), '🔇', 'muted state survives reload');
+  assert.strictEqual(await page.getAttribute('#sound-btn', 'aria-label'), 'Unmute sound');
+});
+
 // S9 — Illegal-transition fuzz: every from→to edge NOT in the state table must be a
 // guarded no-op (returns false, state unchanged).
 scenario('S9 illegal transitions are all blocked', async ({ page, base }) => {

@@ -331,6 +331,32 @@
                 top: calc(12px + env(safe-area-inset-top, 0px)); }
   #reset-btn { left: 12px; left: calc(12px + env(safe-area-inset-left, 0px)); }
   .footer-btn.right { right: 12px; right: calc(12px + env(safe-area-inset-right, 0px)); }
+  /* The settings gear sits left of #sound-btn and appears ONLY on the idle screens
+     (setup/winner) — the sheet is reachable only from there (DESIGN.md §2 overlay policy). */
+  #settings-btn { display: none; right: 76px; right: calc(76px + env(safe-area-inset-right, 0px)); }
+  body[data-state="setup"] #settings-btn,
+  body[data-state="winner"] #settings-btn { display: block; }
+
+  /* SETTINGS SHEET (overlay, NOT a state: owns no timers, never navigates — DESIGN.md §2) */
+  #settings-sheet { position: fixed; inset: 0; z-index: 600; }
+  #settings-sheet[hidden] { display: none; }
+  #sheet-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+  .sheet-panel {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--paper);
+    border-top: 5px solid var(--ink);
+    border-radius: 28px 28px 0 0;
+    padding: 20px 20px 28px;
+    padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+    text-align: center;
+    animation: sheetUp 0.22s ease;
+  }
+  @keyframes sheetUp {
+    from { transform: translateY(40px); opacity: 0; }
+    to   { transform: translateY(0); opacity: 1; }
+  }
+  .sheet-panel h3 { margin: 0 0 12px; font-size: 24px; }
+  .sheet-toggle { display: block; width: min(80vw, 320px); margin: 8px auto; }
 
   /* A11y (G-UX5): visually-hidden live region + no focus ring on programmatically
      focused headings (they carry tabindex="-1"; keyboard-tabbable controls keep theirs). */
@@ -441,6 +467,18 @@
 </section>
 
 <button id="reset-btn" class="footer-btn">↺ Reset</button>
+<button id="sound-btn" class="footer-btn right" aria-label="Mute sound">🔊</button>
+<button id="settings-btn" class="footer-btn" aria-label="Settings">⚙️</button>
+
+<!-- SETTINGS SHEET (overlay, not a state — pure DOM toggle; DESIGN.md §2/§5) -->
+<div id="settings-sheet" hidden>
+  <div id="sheet-backdrop"></div>
+  <div class="sheet-panel">
+    <h3>⚙️ Settings</h3>
+    <button id="sheet-sound" class="sheet-toggle" aria-pressed="true">🔊 Sound: On</button>
+    <button id="sheet-haptics" class="sheet-toggle" aria-pressed="true">📳 Haptics: On</button>
+  </div>
+</div>
 
 <script>
 (() => {
@@ -556,9 +594,47 @@
   function setSetting(k, v) { settings[k] = v; store.set(KEYS.settings, settings); }
 
   // ---------- AUDIO & HAPTICS ----------
-  // Stubs — Phase 2 replaces these wholesale with the WebAudio engine (DESIGN.md §6).
-  const audio = { play() {}, unlock() {} };
-  const haptics = { buzz() {} };
+  // WebAudio-only, zero asset files (DESIGN.md §6). The context is lazily created and
+  // re-resume()d on every cue; the one-time document pointerdown unlock guarantees a
+  // gesture-created context before the first countdown. The settings.sound check lives
+  // inside tone() — the ONLY mute check in the app; call sites never branch.
+  const audio = (() => {
+    let ctx = null;
+    const ensure = () => {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        ctx = ctx || new AC();
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});  // pre-gesture resume may reject; never a pageerror
+        return ctx;
+      } catch { return null; }
+    };
+    function tone(freq, dur, { type = 'square', gain = 0.14, at = 0, slideTo = null } = {}) {
+      if (!settings.sound) return;                 // the ONLY mute check in the app
+      const c = ensure(); if (!c) return;
+      const t0 = c.currentTime + at;
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t0);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+      g.gain.setValueAtTime(gain, t0);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g).connect(c.destination);
+      o.start(t0); o.stop(t0 + dur + 0.05);
+    }
+    const CUES = {
+      tick:    () => tone(880, 0.08),                                        // 3-2-1 steps
+      go:      () => { tone(523, 0.15); tone(784, 0.25, { at: 0.12 }); },    // 'GO NUTS!'
+      urgent:  () => tone(1174, 0.06, { gain: 0.16 }),                       // last URGENT_AT_S seconds
+      buzzer:  () => tone(200, 0.6, { type: 'sawtooth', slideTo: 100, gain: 0.22 }),  // time up / Stop
+      pop:     (n) => tone(440 + 130 * (n || 1), 0.09, { type: 'triangle' }),// star tap, pitch rises 1..5
+      skip:    () => tone(330, 0.14, { slideTo: 200, type: 'triangle' }),    // prompt skip (P3 — no call site yet)
+      nutoff:  () => [392, 392, 392, 311].forEach((f, i) => tone(f, 0.14, { at: i * 0.16 })),  // tie! (P3 — no call site yet)
+      fanfare: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, { at: i * 0.13, type: 'triangle' })),  // winner
+    };
+    return { play(name, arg) { CUES[name]?.(arg); }, unlock: ensure };
+  })();
+  const haptics = { buzz(p) { try { if (settings.haptics) navigator.vibrate?.(p); } catch {} } };
+  document.addEventListener('pointerdown', () => audio.unlock(), { once: true }); /* raw-timer-ok: permanent listener */
 
   // ---------- WAKE LOCK ----------
   // Screen wake lock (DESIGN.md §3): held while the game needs an awake screen, released
@@ -864,11 +940,12 @@
       if (secs > 0 && secs <= CONFIG.ANNOUNCE_AT_S) $('ring-live').textContent = String(secs);
       if (secs > 0 && secs <= CONFIG.URGENT_AT_S) { audio.play('urgent'); haptics.buzz(40); }
     }
-    if (msLeft <= 0) { audio.play('buzzer'); haptics.buzz([80, 60, 80]); endTurn(); }
+    if (msLeft <= 0) endTurn();
   }
 
   function endTurn() {                     // also the Stop button handler body
     if (machine.state !== 'performing') return;   // a turn can only end once (key-repeat safe)
+    audio.play('buzzer'); haptics.buzz([80, 60, 80]);   // one call site covers time-up AND Stop
     openRating();                          // logs the turn entry + builds raterQueue (DESIGN.md §7)
     transition(hasPrivateRating() ? 'pass' : 'rating');
   }
@@ -909,6 +986,7 @@
       b.setAttribute('aria-pressed', i <= currentRating ? 'true' : 'false');
       b.onclick = () => {
         currentRating = i;
+        audio.play('pop', i);              // pitch rises with the star count (DESIGN.md §6)
         renderStars();
         $('rating-word').textContent = RATING_WORDS[i - 1];
         $('submit-rating-btn').disabled = false;
@@ -935,6 +1013,7 @@
       ol.appendChild(li);
     });
     burstConfetti();
+    audio.play('fanfare');
   }
 
   // ---------- WIRING ----------
@@ -989,6 +1068,25 @@
       transition('setup');
     }
   };
+
+  // Sound + settings chrome (DESIGN.md §5): pure DOM toggles persisted via setSetting().
+  // The sheet is an overlay, NOT a state — it owns no timers and never navigates; the
+  // gear button is CSS-gated to body[data-state="setup"/"winner"] only.
+  function renderSoundControls() {
+    $('sound-btn').textContent = settings.sound ? '🔊' : '🔇';
+    $('sound-btn').setAttribute('aria-label', settings.sound ? 'Mute sound' : 'Unmute sound');
+    $('sheet-sound').textContent = settings.sound ? '🔊 Sound: On' : '🔇 Sound: Off';
+    $('sheet-sound').setAttribute('aria-pressed', String(settings.sound));
+    $('sheet-haptics').textContent = settings.haptics ? '📳 Haptics: On' : '📴 Haptics: Off';
+    $('sheet-haptics').setAttribute('aria-pressed', String(settings.haptics));
+  }
+
+  $('sound-btn').onclick = () => { setSetting('sound', !settings.sound); renderSoundControls(); };
+
+  $('settings-btn').onclick = () => { renderSoundControls(); $('settings-sheet').hidden = false; };
+  $('sheet-backdrop').onclick = () => { $('settings-sheet').hidden = true; };
+  $('sheet-sound').onclick = () => { setSetting('sound', !settings.sound); renderSoundControls(); };
+  $('sheet-haptics').onclick = () => { setSetting('haptics', !settings.haptics); renderSoundControls(); };
 
   $('resume-btn').onclick = () => { if (pendingResume) resumeGame(pendingResume); };
 
@@ -1126,6 +1224,7 @@
     if (wakeLock.wants(machine.state)) wakeLock.sync(machine.state);  // re-acquire after tab hide (DESIGN.md §3)
   });
   $('ring-fg').setAttribute('stroke-dasharray', CONFIG.RING_CIRC);
+  renderSoundControls();                   // paint the persisted mute state onto the fixed chrome
   const bootSnap = loadSnapshot();         // resume check (DESIGN.md §4)
   if (bootSnap) {
     if (bootSnap.phase === 'setup') {
