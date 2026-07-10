@@ -70,7 +70,7 @@
      the wobble/pulse keyframes on its children (nested transforms compose), and the
      transform resolves back to none at the end, so overflow scrolling on short
      viewports is untouched once the 0.28s entrance finishes. */
-  .screen.active { display: flex; animation: screenIn 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+  .screen.active { display: flex; animation: screenIn 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2); z-index: 1; }
   @keyframes screenIn {
     from { opacity: 0; transform: translateY(28px) scale(0.96); }
     to   { opacity: 1; transform: translateY(0) scale(1); }
@@ -339,6 +339,59 @@
     100% { transform: scale(1) rotate(0); opacity: 1; }
   }
 
+  /* MASCOT (G-UX3): the peanut cheers from the bottom-left corner. Poses swap PURELY
+     via body[data-state] display-toggles on the <g id="pose-*"> layers — zero JS, zero
+     machine impact. It paints UNDER the active screen (.screen.active carries z-index:1)
+     so panels and buttons are never obscured, and pointer-events:none means it can never
+     eat a tap either. Countdown is the one exception: that screen's dimmed backdrop would
+     gray the hype pose out, and it holds nothing but the centered 3-2-1 number, so the
+     mascot pops above it there. The bob animation is killed wholesale by the .test and
+     prefers-reduced-motion rules below (both match every element). */
+  #mascot {
+    position: fixed; z-index: 0; pointer-events: none;
+    left: 8px; left: calc(8px + env(safe-area-inset-left, 0px));
+    bottom: 6px; bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    width: clamp(88px, 26vmin, 120px); height: auto;
+    animation: mascotBob 2.6s ease-in-out infinite;
+  }
+  /* Panel screens reserve the mascot's corner: their wide panels would otherwise sit
+     on top of the peanut (it paints under screens, so it vanishes head-first). The
+     reserve tracks the mascot's own clamp() so small phones give up less space; the
+     action screens (intro/countdown/timer) keep the compact padding — their content
+     is narrow and centered, so the corner is already clear of buttons. */
+  #setup-screen, #rating-screen, #winner-screen {
+    padding-bottom: 134px;
+    padding-bottom: calc(clamp(88px, 26vmin, 120px) + 14px + env(safe-area-inset-bottom, 0px));
+  }
+  body[data-state="countdown"] #mascot { z-index: 2; }
+  @keyframes mascotBob {
+    0%, 100% { transform: translateY(0) rotate(-2deg); }
+    50%      { transform: translateY(-7px) rotate(2deg); }
+  }
+  #mascot g[id^="pose-"] { display: none; }   /* page CSS owns the pose toggle */
+  body[data-state="setup"] #pose-idle,
+  body[data-state="intro"] #pose-idle,
+  body[data-state="countdown"] #pose-hype,
+  body[data-state="performing"] #pose-hype,
+  body[data-state="pass"] #pose-watch,        /* Phase 3 state — wired ahead of time */
+  body[data-state="rating"] #pose-watch,
+  body[data-state="winner"] #pose-crown { display: inline; }
+  /* Short portrait viewports: the panel screens overflow and scroll, so their panels
+     would slide over the corner and reduce the peanut to a ghost behind the 92%-opaque
+     panel. On those states it bows out and the reserve is returned; the action screens
+     keep it — their content is narrow and centered, so the corner stays clear. */
+  @media (max-height: 700px) {
+    body[data-state="setup"] #mascot,
+    body[data-state="rating"] #mascot,
+    body[data-state="winner"] #mascot { display: none; }
+    #setup-screen, #rating-screen, #winner-screen {
+      padding-bottom: 20px;
+      padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    }
+  }
+  /* Cramped viewports (landscape phones): the corner is real estate the game needs. */
+  @media (max-height: 460px) { #mascot { display: none; } }
+
   .small { font-size: 14px; opacity: 0.9; }
   /* Fixed chrome respects the notch/home-indicator (G-UX7): plain fallbacks first,
      then env()-aware overrides. #reset-btn sits top-left; the Phase 2 #sound-btn
@@ -483,6 +536,102 @@
     <button id="new-game-btn">New Game</button>
   </div>
 </section>
+
+<!-- MASCOT (G-UX3): one shared peanut body in <defs>, four toggleable pose layers.
+     Which pose shows is pure body[data-state] CSS (see the MASCOT style block) — no JS
+     ever touches this node. Decorative only, so it is hidden from assistive tech. -->
+<svg id="mascot" viewBox="0 0 200 200" width="200" height="200" fill="none"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+<defs>
+<path id="pb" d="M100 36C82 36 70 48 70 62c0 10 10 16 10 25 0 9-14 15-14 29 0 18 15 30 34 30s34-12 34-30c0-14-14-20-14-29 0-9 10-15 10-25 0-14-12-26-30-26Z"/>
+<g id="bod">
+<use href="#pb" x="4" y="4" fill="#1a1a2e"/>
+<use href="#pb" fill="#ffbe0b" stroke="#1a1a2e" stroke-width="5"/>
+<g stroke="#1a1a2e" stroke-width="2.5" opacity=".28">
+<path d="M74 108q26 12 52 0M78 126q22 10 44 0M88 100q5 22-1 42M112 100q-5 22 1 42"/>
+</g>
+</g>
+</defs>
+<g id="pose-idle">
+<g stroke="#1a1a2e" stroke-width="10"><path d="M90 138v24M110 138v24"/></g>
+<ellipse cx="83" cy="166" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4"/>
+<ellipse cx="117" cy="166" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4"/>
+<g stroke="#1a1a2e" stroke-width="10"><path d="M80 96C58 102 54 116 62 126M120 96c22-6 30-24 23-36"/></g>
+<circle cx="63" cy="129" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<circle cx="141" cy="57" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<use href="#bod"/>
+<g stroke="#1a1a2e" stroke-width="3.5"><path d="M83 47q7-5 13 0M104 47q7-5 13 0"/></g>
+<circle cx="90" cy="58" r="6.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="110" cy="58" r="6.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="91" cy="59" r="2.8" fill="#1a1a2e"/><circle cx="111" cy="59" r="2.8" fill="#1a1a2e"/>
+<circle cx="79" cy="67" r="4" fill="#ff006e" opacity=".4"/><circle cx="121" cy="67" r="4" fill="#ff006e" opacity=".4"/>
+<path d="M87 71q13 12 26 0" stroke="#1a1a2e" stroke-width="4"/>
+<path d="M95 76h10v4q0 5-5 5t-5-5z" fill="#fffaf0" stroke="#1a1a2e" stroke-width="2.5"/>
+</g>
+<g id="pose-hype">
+<g stroke="#1a1a2e" stroke-width="3.5"><path d="M22 62q-7 10 0 20M180 56q7 10 0 20M14 70q-4 6 0 12"/></g>
+<g transform="rotate(-8 100 100)">
+<g stroke="#1a1a2e" stroke-width="10"><path d="M92 138l-8 25M110 138c12 10 22 6 32 14"/></g>
+<ellipse cx="81" cy="167" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4"/>
+<ellipse cx="148" cy="157" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4" transform="rotate(24 148 157)"/>
+<g stroke="#1a1a2e" stroke-width="10"><path d="M80 92C54 88 62 62 42 52M120 92c30-4 20-34 40-46"/></g>
+<circle cx="39" cy="49" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<circle cx="163" cy="43" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<use href="#bod"/>
+<g stroke="#1a1a2e" stroke-width="3.5"><path d="M81 42q7-6 14-1M105 41q7-5 14 1"/></g>
+<circle cx="89" cy="56" r="7.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="111" cy="56" r="7.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="89" cy="54" r="3" fill="#1a1a2e"/><circle cx="111" cy="54" r="3" fill="#1a1a2e"/>
+<ellipse cx="100" cy="78" rx="10" ry="11" fill="#1a1a2e" stroke="#1a1a2e" stroke-width="3"/>
+<path d="M91 80q9 11 18 0a9 8 0 0 1-18 0z" fill="#ff006e"/>
+</g>
+<path d="M26 104l3 7 7 3-7 3-3 7-3-7-7-3 7-3z" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<path d="M176 92l3 7 7 3-7 3-3 7-3-7-7-3 7-3z" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<path d="M108 8l2.5 6 6 2.5-6 2.5-2.5 6-2.5-6-6-2.5 6-2.5z" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+</g>
+<g id="pose-watch">
+<g stroke="#1a1a2e" stroke-width="10"><path d="M92 138l-5 24M108 138l5 24"/></g>
+<ellipse cx="85" cy="166" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4"/>
+<ellipse cx="115" cy="166" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4"/>
+<g stroke="#1a1a2e" stroke-width="10"><path d="M80 96C64 104 66 118 78 124M120 96c16 8 14 22 2 28"/></g>
+<use href="#bod"/>
+<circle cx="86" cy="106" r="5" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<circle cx="95" cy="101" r="5" fill="#fffaf0" stroke="#1a1a2e" stroke-width="2.5"/>
+<circle cx="104" cy="105" r="5" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<circle cx="112" cy="101" r="5" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<path d="M80 108h40l-4 36H84z" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<path d="M91 112l-2 28M100 112v28M109 112l2 28" stroke="#ff006e" stroke-width="5"/>
+<circle cx="79" cy="124" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<circle cx="121" cy="124" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<path d="M122 98q24-16 15-46" stroke="#1a1a2e" stroke-width="2.5" stroke-dasharray="4 5" opacity=".6"/>
+<circle cx="138" cy="45" r="4.5" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<g stroke="#1a1a2e" stroke-width="3.5"><path d="M83 46q7-4 13 0M105 44q7-5 13 2"/></g>
+<circle cx="90" cy="58" r="6.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="110" cy="58" r="6.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="92.5" cy="56.5" r="2.8" fill="#1a1a2e"/><circle cx="112.5" cy="56.5" r="2.8" fill="#1a1a2e"/>
+<ellipse cx="102" cy="76" rx="6" ry="7" fill="#1a1a2e"/>
+</g>
+<g id="pose-crown">
+<g fill="#ff006e"><rect x="36" y="58" width="7" height="7" transform="rotate(20 40 62)"/><rect x="162" y="126" width="7" height="7" transform="rotate(-15 165 130)"/></g>
+<g fill="#3a86ff"><circle cx="52" cy="30" r="4"/><rect x="156" y="66" width="7" height="7" transform="rotate(30 160 70)"/></g>
+<g fill="#8338ec"><circle cx="30" cy="118" r="4"/><rect x="138" y="22" width="7" height="7" transform="rotate(15 141 26)"/></g>
+<circle cx="66" cy="12" r="3.5" fill="#fb5607"/><circle cx="176" cy="104" r="3.5" fill="#fb5607"/>
+<g stroke="#1a1a2e" stroke-width="10"><path d="M92 138l-9 22M108 138l9 22"/></g>
+<ellipse cx="78" cy="164" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4" transform="rotate(-18 78 164)"/>
+<ellipse cx="122" cy="164" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4" transform="rotate(18 122 164)"/>
+<g stroke="#1a1a2e" stroke-width="10"><path d="M80 92C60 82 54 62 46 44M120 92c20-10 26-30 34-48"/></g>
+<circle cx="44" cy="40" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<circle cx="156" cy="40" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<use href="#bod"/>
+<g stroke="#1a1a2e" stroke-width="4"><path d="M100 1v6M68 5l4 7M132 5l-4 7"/></g>
+<path d="M76 36l4-20 12 10 8-14 8 14 12-10 4 20z" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="4"/>
+<circle cx="80" cy="15" r="3" fill="#ff006e"/><circle cx="100" cy="11" r="3" fill="#ff006e"/><circle cx="120" cy="15" r="3" fill="#ff006e"/>
+<g stroke="#1a1a2e" stroke-width="4"><path d="M83 58q7-9 14 0M103 58q7-9 14 0"/></g>
+<circle cx="79" cy="66" r="4" fill="#ff006e" opacity=".4"/><circle cx="121" cy="66" r="4" fill="#ff006e" opacity=".4"/>
+<path d="M85 69q15 16 30 0" stroke="#1a1a2e" stroke-width="4"/>
+<path d="M95 75h10v4q0 5-5 5t-5-5z" fill="#fffaf0" stroke="#1a1a2e" stroke-width="2.5"/>
+</g>
+</svg>
 
 <button id="reset-btn" class="footer-btn">↺ Reset</button>
 <button id="sound-btn" class="footer-btn right" aria-label="Mute sound">🔊</button>
