@@ -4,6 +4,21 @@
 
 ---
 
+## Implementation status (2026-07-10)
+
+**All four phases below are implemented** on this branch, governed by the architecture spec in `DESIGN.md` (produced by a design panel and treated as the source of truth during the build). Every phase shipped through the same pipeline: sequential implementation commits, an independent test run plus four review lenses (spec invariants, behavior/game logic, visual QA on real screenshots, test quality), adversarial verification of every finding, a fix pass, and a green gate.
+
+| Phase | Status | Notes |
+|---|---|---|
+| 1 — Reliability | ✅ Shipped | State machine + timer registry, wall-clock timer, localStorage resume, wake lock, 9-scenario smoke suite + CI gate. Both audit-verified crashes are structurally impossible now. |
+| 2 — Graphics & feel | ✅ Shipped | Screen transitions, WebAudio cues + haptics, mute/settings sheet, peanut mascot (3-candidate design panel), confetti upgrades, a11y + reduced motion, favicon/OG/social meta, PWA (offline via service worker), safe-area support. |
+| 3 — Gameplay depth | ✅ Shipped | 130-prompt "Go nuts like…" deck with per-player skips, shuffled turn order, private pass-the-phone rating, turn-length/rounds settings, multi-round scoreboard, NUT-OFF tie-breaker, superlatives, hall of fame. |
+| 4 — Stretch | ✅ Shipped (3 of 4) | Custom prompt decks, canvas share card (Web Share + download), team mode. Multi-device rooms deliberately not built — requires a backend, contradicts the zero-setup single-link architecture. |
+
+The smoke suite now covers 18 scenarios and, together with two structural lints (no raw timers outside the registry, no forced clicks in tests), gates every GitHub Pages deploy. Deviations from this document's original sketches are recorded in `DESIGN.md` and in code comments (notably: the turn deadline anchors to `Date.now()` because `performance.now()` freezes during iOS page suspension; ties fall back to co-winners whenever a NUT-OFF would have no eligible raters; setup-screen team assignments intentionally don't persist until a game starts).
+
+---
+
 ## 1. What exists today
 
 Go Nuts! is a pass-the-phone party game shipped as a single self-contained `index.html` (~700 lines: CSS, markup, and vanilla JS), deployed to GitHub Pages on every push to `main`.
