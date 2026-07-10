@@ -206,6 +206,18 @@ scenario('S6 tie renders co-winners', async ({ page, base }) => {
   await page.waitForSelector('#winner-screen.active');
   assert.strictEqual(await text(page, '#winner-subtitle'), 'CO-CRAZIEST OF THEM ALL');
   assert.strictEqual(await text(page, '#winner-name'), 'Ann & Ben');
+
+  // Reload on the winner screen: the banner must say the game FINISHED (no bogus
+  // "in progress"/"? up next"), and Resume must re-show the winner screen.
+  await page.reload();
+  await page.waitForSelector('#setup-screen.active');
+  const banner = await page.waitForSelector('#resume-banner:not([hidden])');
+  const msg = (await banner.textContent()).trim();
+  assert.ok(msg.includes('Finished game') && !msg.includes('?') && !msg.includes('in progress'),
+    `unexpected finished-game banner: ${msg}`);
+  await page.click('#resume-btn');
+  await page.waitForSelector('#winner-screen.active');
+  assert.strictEqual(await text(page, '#winner-name'), 'Ann & Ben');
 });
 
 // S7 — Duplicate/empty name feedback: visible message, roster unchanged.

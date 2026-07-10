@@ -783,7 +783,10 @@
   }
 
   // -- performing (timer) --
-  // Truth is performance.now() vs run.turnEndsAt; the REPAINT_MS interval only repaints (DESIGN.md §3).
+  // Truth is Date.now() vs run.turnEndsAt; the REPAINT_MS interval only repaints (DESIGN.md §3).
+  // Date.now() (not performance.now()) on purpose: iOS Safari freezes performance.now() while
+  // the page is suspended (screen lock), which would grant a de-facto pause — §3 rules that out.
+  // The deadline is still never persisted, so a reload stays harmless (§3 resume rule).
   // Ephemeral runtime values live here — never in closures captured by listeners, never persisted.
   const run = { turnEndsAt: 0, turnTotalMs: 0, lastWholeSecond: 0 };
 
@@ -793,7 +796,7 @@
     $('timer-name').textContent = p.name;
     renderPromptLine();                                     // no-op until Phase 3
     run.turnTotalMs = turnSecondsForCurrentTurn() * 1000;
-    run.turnEndsAt  = performance.now() + run.turnTotalMs;
+    run.turnEndsAt  = Date.now() + run.turnTotalMs;
     run.lastWholeSecond = turnSecondsForCurrentTurn() + 1;
     repaintRing(); cycleWord();
     timers.every(CONFIG.REPAINT_MS, repaintRing);
@@ -803,7 +806,7 @@
   function renderPromptLine() {}           // prompt deck lands in Phase 3 (DESIGN.md §7)
 
   function repaintRing() {                 // replaces tick() + updateRing()
-    const msLeft = Math.max(0, run.turnEndsAt - performance.now());
+    const msLeft = Math.max(0, run.turnEndsAt - Date.now());
     const secs = Math.ceil(msLeft / 1000);
     $('ring-num').textContent = secs;
     const ring = $('ring-fg');
@@ -990,10 +993,15 @@
     const banner = $('resume-banner');
     if (!pendingResume) { banner.hidden = true; return; }
     const g = pendingResume.game;
-    const nextId = g.tiebreak ? g.tiebreak.order[g.tiebreak.turnIdx] : g.order[g.turnIdx];
-    const next = g.players.find(p => p.id === nextId);
-    $('resume-msg').textContent =
-      `Game in progress — ${g.players.length} players, round ${g.round}, ${next?.name ?? '?'} up next.`;
+    if (pendingResume.phase === 'winner') {        // finished game: no "next" performer exists
+      $('resume-msg').textContent =
+        `Finished game — ${g.players.length} players. Resume to see the results.`;
+    } else {
+      const nextId = g.tiebreak ? g.tiebreak.order[g.tiebreak.turnIdx] : g.order[g.turnIdx];
+      const next = g.players.find(p => p.id === nextId);
+      $('resume-msg').textContent =
+        `Game in progress — ${g.players.length} players, round ${g.round}, ${next?.name ?? '?'} up next.`;
+    }
     banner.hidden = false;
   }
 
