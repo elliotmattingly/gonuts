@@ -243,8 +243,21 @@ scenario('S8 sound/haptics toggles persist across reload', async ({ page, base }
   await page.click('#sound-btn');
   assert.strictEqual(await text(page, '#sound-btn'), '🔇');
 
-  // The gear opens the sheet (visible on setup); haptics toggles there; backdrop tap closes.
+  // The gear opens the sheet (visible on setup). It must be a REAL modal: dialog
+  // semantics for AT, an inert background (a keyboard user must not be able to reach
+  // #start-btn and launch the game under the sheet), and Escape/Done/backdrop closes.
   await page.click('#settings-btn');
+  await page.waitForSelector('#settings-sheet:not([hidden])');
+  assert.strictEqual(await page.getAttribute('#settings-sheet .sheet-panel', 'role'), 'dialog');
+  assert.strictEqual(await page.getAttribute('#settings-sheet .sheet-panel', 'aria-modal'), 'true');
+  assert.ok(await page.$eval('#setup-screen', el => el.inert), 'background is inert while the sheet is open');
+  assert.ok(await page.$eval('#start-btn', el => el !== document.activeElement && el.closest('[inert]') !== null),
+    'start button is unreachable behind the open sheet');
+  await page.keyboard.press('Escape');                                     // Escape closes it
+  assert.strictEqual(await page.$('#settings-sheet:not([hidden])'), null, 'Escape closes the sheet');
+  assert.ok(await page.$eval('#setup-screen', el => !el.inert), 'background inert lifts on close');
+
+  await page.click('#settings-btn');                                       // reopen for the toggle checks
   await page.waitForSelector('#settings-sheet:not([hidden])');
   assert.strictEqual(await text(page, '#sheet-sound'), '🔇 Sound: Off');   // sheet mirrors the corner button
   await page.click('#sheet-haptics');
@@ -278,11 +291,15 @@ scenario('G-UX8 five-star tap fires an origin micro-burst with 🥜 glyphs', asy
   await page.click('#stars .star:nth-child(5)');
   const parts = await page.evaluate(() => window.__gonuts.getConfetti());
   assert.strictEqual(parts.length, 30, `expected a 30-particle micro-burst, got ${parts.length}`);
-  assert.ok(parts.some(p => p.glyph === '🥜'), 'burst mixes 🥜 glyph particles (~1-in-5)');
-  // Origin burst: particles cluster at the tapped star (a few frames of drift allowed),
-  // instead of raining from random x positions across the top of the screen.
-  assert.ok(parts.every(p => Math.abs(p.x - star.x) < 200 && Math.abs(p.y - star.y) < 200),
-    'micro-burst particles must originate at the tapped star');
+  // Glyph assignment is deterministic (every 5th particle) — an unseeded coin flip here
+  // flaked ~1 in 800 CI runs (0.8^30 all-paper bursts), so the count is exact now.
+  assert.strictEqual(parts.filter(p => p.glyph === '🥜').length, 6,
+    'exactly 6 of 30 particles are 🥜 glyphs (deterministic 1-in-5)');
+  // Origin burst: assert on the engine-recorded spawn coords (x0/y0), NOT the live x/y —
+  // the rafLoop physics keeps advancing particles between the click and this evaluate,
+  // so live positions drift past any fixed bound if the CDP round-trip stalls ~500ms.
+  assert.ok(parts.every(p => Math.abs(p.x0 - star.x) < 2 && Math.abs(p.y0 - star.y) < 2),
+    'micro-burst particles must spawn at the tapped star');
   await page.click('#submit-rating-btn');          // the 5-star rating still records normally
   await page.waitForSelector('#intro-screen.active');
   const g = await page.evaluate(() => window.__gonuts.getGame());

@@ -267,6 +267,7 @@
   }
   .winner-name {
     font-size: clamp(48px, 12vw, 120px);
+    overflow-wrap: anywhere;   /* a max-length name at the 48px floor beats a 320px viewport — wrap, never clip */
     color: #ffeb3b;
     text-shadow:
       5px 5px 0 var(--ink),
@@ -376,18 +377,19 @@
   body[data-state="pass"] #pose-watch,        /* Phase 3 state — wired ahead of time */
   body[data-state="rating"] #pose-watch,
   body[data-state="winner"] #pose-crown { display: inline; }
-  /* Short portrait viewports: the panel screens overflow and scroll, so their panels
-     would slide over the corner and reduce the peanut to a ghost behind the 92%-opaque
-     panel. On those states it bows out and the reserve is returned; the action screens
-     keep it — their content is narrow and centered, so the corner stays clear. */
-  @media (max-height: 700px) {
-    body[data-state="setup"] #mascot,
-    body[data-state="rating"] #mascot,
-    body[data-state="winner"] #mascot { display: none; }
-    #setup-screen, #rating-screen, #winner-screen {
-      padding-bottom: 20px;
-      padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
-    }
+  /* Crowded viewports: when the active screen's content (measured WITH the reserve in
+     place) can't fit the viewport, its panels would scroll over the corner and reduce
+     the peanut to a ghost behind the 92%-opaque panel — a fixed height cutoff can't
+     catch this (a 5-player winner scoreboard overflows even tall phones; an empty
+     setup fits short ones). syncMascot() stamps body.crowded after every transition,
+     roster render, and resize; on the panel states the peanut then bows out and the
+     reserve is returned. Poses remain pure body[data-state] CSS (G-UX3). */
+  body.crowded[data-state="setup"] #mascot,
+  body.crowded[data-state="rating"] #mascot,
+  body.crowded[data-state="winner"] #mascot { display: none; }
+  body.crowded #setup-screen, body.crowded #rating-screen, body.crowded #winner-screen {
+    padding-bottom: 20px;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
   }
   /* Cramped viewports (landscape phones): the corner is real estate the game needs. */
   @media (max-height: 460px) { #mascot { display: none; } }
@@ -637,13 +639,17 @@
 <button id="sound-btn" class="footer-btn right" aria-label="Mute sound">🔊</button>
 <button id="settings-btn" class="footer-btn" aria-label="Settings">⚙️</button>
 
-<!-- SETTINGS SHEET (overlay, not a state — pure DOM toggle; DESIGN.md §2/§5) -->
+<!-- SETTINGS SHEET (overlay, not a state — pure DOM toggle; DESIGN.md §2/§5).
+     A real modal (G-UX5): dialog semantics for AT, and setSheetOpen() inerts everything
+     behind it, so keyboard/switch users can't reach (or Enter-activate) the game
+     underneath. Escape, the Done button, and a backdrop tap all dismiss it. -->
 <div id="settings-sheet" hidden>
   <div id="sheet-backdrop"></div>
-  <div class="sheet-panel">
-    <h3>⚙️ Settings</h3>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <h3 id="sheet-title">⚙️ Settings</h3>
     <button id="sheet-sound" class="sheet-toggle" aria-pressed="true">🔊 Sound: On</button>
     <button id="sheet-haptics" class="sheet-toggle" aria-pressed="true">📳 Haptics: On</button>
+    <button id="sheet-close" class="sheet-toggle primary">Done</button>
   </div>
 </div>
 
@@ -772,7 +778,10 @@
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) return null;
         ctx = ctx || new AC();
-        if (ctx.state === 'suspended') ctx.resume().catch(() => {});  // pre-gesture resume may reject; never a pageerror
+        // Resume anything not running — iOS Safari parks the context in a non-standard
+        // 'interrupted' state after a phone call/Siri and may never auto-resume it; a
+        // 'suspended'-only check would leave audio dead for the rest of the session.
+        if (ctx.state !== 'running') ctx.resume().catch(() => {});  // pre-gesture resume may reject; never a pageerror
         return ctx;
       } catch { return null; }
     };
@@ -985,11 +994,14 @@
     machine.state = to;
     show(STATES[to].screen);               // the ONLY call site of show()
     STATES[to].enter(payload);
+    syncMascot();                          // content just rendered — re-measure the mascot bow-out
     saveGame();                            // persistence rides every transition (DESIGN.md §4)
     return true;
   }
 
   function show(name) {                    // PRIVATE to transition(): dumb DOM toggler
+    setSheetOpen(false);                   // no overlay outlives a navigation (belt-and-braces:
+                                           // the inert background makes mid-sheet transitions unreachable anyway)
     document.body.dataset.state = machine.state;
     document.querySelectorAll('.screen').forEach(el =>
       el.classList.toggle('active', el.id === `${name}-screen`));
@@ -1001,6 +1013,20 @@
   }
 
   // ---------- SCREENS ----------
+  // Mascot bow-out (G-UX3): the panel screens reserve the peanut's corner via bottom
+  // padding, but whether the content fits is roster/scoreboard-dependent — no fixed
+  // height cutoff works (a 5-player winner scoreboard overflows even tall phones).
+  // Measure WITH the reserve in place (class off), so the predicate is stable and
+  // never oscillates, then stamp body.crowded; the CSS block hides the mascot and
+  // returns the reserve on the panel states. Pure sync layout read — no timers, no
+  // transitions, and pose selection stays 100% body[data-state] CSS.
+  function syncMascot() {
+    document.body.classList.remove('crowded');
+    const scr = document.querySelector('.screen.active');
+    const crowded = !!scr && scr.scrollHeight > scr.clientHeight + 1;
+    document.body.classList.toggle('crowded', crowded);
+  }
+
   // -- setup --
   const nameInput = $('name-input');
   const addBtn = $('add-btn');
@@ -1020,6 +1046,7 @@
       playerList.appendChild(li);
     });
     startBtn.disabled = roster.length < CONFIG.MIN_PLAYERS;
+    syncMascot();                          // the roster just grew/shrank the setup panel
   }
 
   function nameFeedback(msg) {             // message under the input + 300ms shake; cleared on next input
@@ -1255,8 +1282,29 @@
 
   $('sound-btn').onclick = () => { setSetting('sound', !settings.sound); renderSoundControls(); };
 
-  $('settings-btn').onclick = () => { renderSoundControls(); $('settings-sheet').hidden = false; };
-  $('sheet-backdrop').onclick = () => { $('settings-sheet').hidden = true; };
+  // Sheet open/close (G-UX5): a real modal. While it is up, everything behind it goes
+  // inert (unfocusable + unclickable), so a keyboard-only user can never Tab to
+  // #start-btn and launch the game underneath the sheet; Escape, Done, and the backdrop
+  // all dismiss it, and show() force-closes it so no overlay ever outlives a transition.
+  // Still a pure DOM toggle — owns no timers, never navigates (DESIGN.md §2).
+  function setSheetOpen(open) {
+    const sheet = $('settings-sheet');
+    if (sheet.hidden === !open) return;              // already in the requested state
+    const hadFocus = sheet.contains(document.activeElement);
+    sheet.hidden = !open;
+    for (const el of document.body.children) {       // inert the whole background, not just pointers
+      if (el !== sheet && el.tagName !== 'SCRIPT') el.inert = open;
+    }
+    if (open) { renderSoundControls(); $('sheet-close').focus(); }
+    else if (hadFocus) $('settings-btn').focus();    // hand focus back to the opener
+  }
+
+  $('settings-btn').onclick = () => setSheetOpen(true);
+  $('sheet-backdrop').onclick = () => setSheetOpen(false);
+  $('sheet-close').onclick = () => setSheetOpen(false);
+  document.addEventListener('keydown', (e) => { /* raw-timer-ok: permanent listener */
+    if (e.key === 'Escape') setSheetOpen(false);
+  });
   $('sheet-sound').onclick = () => { setSetting('sound', !settings.sound); renderSoundControls(); };
   $('sheet-haptics').onclick = () => { setSetting('haptics', !settings.haptics); renderSoundControls(); };
 
@@ -1311,7 +1359,7 @@
 
   function renderResumeBanner() {
     const banner = $('resume-banner');
-    if (!pendingResume) { banner.hidden = true; return; }
+    if (!pendingResume) { banner.hidden = true; syncMascot(); return; }   // hiding the banner changes the height too
     const g = pendingResume.game;
     if (pendingResume.phase === 'winner') {        // finished game: no "next" performer exists
       $('resume-msg').textContent =
@@ -1323,6 +1371,7 @@
         `Game in progress — ${g.players.length} players, round ${g.round}, ${next?.name ?? '?'} up next.`;
     }
     banner.hidden = false;
+    syncMascot();                          // the banner changes the setup screen's height
   }
 
   // Courtesy guard against accidental pull-to-refresh — persistence is the real safety net.
@@ -1353,20 +1402,27 @@
 
   // burstConfetti(count, origin) — G-UX8: no origin = full-screen rain from the top
   // (the winner celebration); an {x, y} origin = a radial pop from that point (the
-  // 5-star micro-burst). ~1-in-5 particles are 🥜 glyphs drawn with fillText + rotation.
+  // 5-star micro-burst). Every 5th particle is a 🥜 glyph drawn with fillText +
+  // rotation — deterministic i%5, not Math.random(): visually identical 1-in-5
+  // density, but the smoke suite counts the peanuts, and an unseeded coin flip made
+  // that assertion flake ~1 in 800 CI runs (0.8^30 ≈ 0.124% all-paper bursts).
+  // x0/y0 record each particle's spawn point: physics advances x/y every frame, so
+  // origin assertions in the suite read the frozen spawn coords instead of racing
+  // the live sim across a CDP round-trip.
   function burstConfetti(count = 220, origin = null) {
     const colors = ['#ff006e','#fb5607','#ffbe0b','#8338ec','#3a86ff','#00e676','#ffeb3b'];
     for (let i = 0; i < count; i++) {
+      const x = origin ? origin.x : Math.random() * canvas.width;
+      const y = origin ? origin.y : -20 - Math.random() * canvas.height * 0.5;
       confetti.push({
-        x: origin ? origin.x : Math.random() * canvas.width,
-        y: origin ? origin.y : -20 - Math.random() * canvas.height * 0.5,
+        x, y, x0: x, y0: y,
         vx: (Math.random() - 0.5) * (origin ? 10 : 6),
         vy: origin ? -(2 + Math.random() * 6) : 2 + Math.random() * 4,
         size: 6 + Math.random() * 8,
         rot: Math.random() * Math.PI * 2,
         vr: (Math.random() - 0.5) * 0.3,
         color: colors[Math.floor(Math.random() * colors.length)],
-        glyph: Math.random() < 0.2 ? '🥜' : null,
+        glyph: i % 5 === 0 ? '🥜' : null,
         life: 300 + Math.random() * 200,
       });
     }
@@ -1416,6 +1472,7 @@
     if (machine.state === 'performing') repaintRing();
     if (wakeLock.wants(machine.state)) wakeLock.sync(machine.state);  // re-acquire after tab hide (DESIGN.md §3)
   });
+  window.addEventListener('resize', syncMascot); /* raw-timer-ok: permanent listener — rotation/keyboard resizes re-measure the bow-out */
   $('ring-fg').setAttribute('stroke-dasharray', CONFIG.RING_CIRC);
   renderSoundControls();                   // paint the persisted mute state onto the fixed chrome
   const bootSnap = loadSnapshot();         // resume check (DESIGN.md §4)

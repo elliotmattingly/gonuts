@@ -338,7 +338,7 @@ const audio = (() => {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
       ctx = ctx || new AC();
-      if (ctx.state === 'suspended') ctx.resume();
+      if (ctx.state !== 'running') ctx.resume();   // covers iOS Safari's non-standard 'interrupted' state, not just 'suspended'
       return ctx;
     } catch { return null; }
   };
