@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Go Nuts! acorn mark — ink outline, flat fills, game palette (DESIGN.md §9).
+       Full-bleed background so the same file works as a maskable PWA icon; the acorn
+       stays inside the central ~66% (the maskable safe zone is the central 80%). -->
+  <rect width="512" height="512" fill="#ff006e"/>
+  <g transform="rotate(-8 256 276)">
+    <!-- body -->
+    <path d="M162 246 h188 c0 84 -37 138 -94 166 c-57 -28 -94 -82 -94 -166 z"
+          fill="#ffbe0b" stroke="#1a1a2e" stroke-width="18" stroke-linejoin="round"/>
+    <!-- body highlight -->
+    <path d="M198 272 c3 52 22 88 46 108" fill="none"
+          stroke="#fffaf0" stroke-width="16" stroke-linecap="round"/>
+    <!-- cap -->
+    <path d="M146 250 c-10 -76 50 -128 110 -128 s120 52 110 128
+             c-38 13 -75 19 -110 19 s-72 -6 -110 -19 z"
+          fill="#fb5607" stroke="#1a1a2e" stroke-width="18" stroke-linejoin="round"/>
+    <!-- cap shine -->
+    <circle cx="205" cy="182" r="14" fill="#fffaf0"/>
+    <!-- stem -->
+    <path d="M256 126 c-6 -28 8 -44 28 -50" fill="none"
+          stroke="#1a1a2e" stroke-width="20" stroke-linecap="round"/>
+  </g>
+</svg>

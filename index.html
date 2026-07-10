@@ -2,8 +2,25 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <title>Go Nuts!</title>
+<link rel="icon" href="icon.svg" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#ff006e" />
+<meta name="description" content="The pass-the-phone party game where the craziest player wins." />
+<!-- Social cards (G-UX6): unfurlers need absolute URLs, so these point at the Pages deploy. -->
+<meta property="og:title" content="Go Nuts!" />
+<meta property="og:description" content="The pass-the-phone party game where the craziest player wins." />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://elliotmattingly.github.io/gonuts/" />
+<meta property="og:image" content="https://elliotmattingly.github.io/gonuts/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Go Nuts!" />
+<meta name="twitter:description" content="The pass-the-phone party game where the craziest player wins." />
+<meta name="twitter:image" content="https://elliotmattingly.github.io/gonuts/og.png" />
 <style>
   :root {
     --bg1: #ff006e;
@@ -38,14 +55,27 @@
     flex-direction: column;
     align-items: safe center;
     justify-content: safe center;
-    padding: 60px 20px 20px;
+    padding: 60px 20px 20px;   /* plain fallback for browsers without env() */
+    padding: calc(60px + env(safe-area-inset-top, 0px))
+             calc(20px + env(safe-area-inset-right, 0px))
+             calc(20px + env(safe-area-inset-bottom, 0px))
+             calc(20px + env(safe-area-inset-left, 0px));
     text-align: center;
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
   }
-  .screen.active { display: flex; }
+  /* Screen entrance (G-UX1): the incoming screen slides up with a springy pop; the
+     outgoing one just cuts (display:none). Animating the section itself never fights
+     the wobble/pulse keyframes on its children (nested transforms compose), and the
+     transform resolves back to none at the end, so overflow scrolling on short
+     viewports is untouched once the 0.28s entrance finishes. */
+  .screen.active { display: flex; animation: screenIn 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.2); z-index: 1; }
+  @keyframes screenIn {
+    from { opacity: 0; transform: translateY(28px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
   .screen > * { flex-shrink: 0; }
   h1 {
     font-size: clamp(48px, 12vw, 140px);
@@ -88,6 +118,14 @@
   button:active, .btn:active {
     transform: translate(4px, 4px);
     box-shadow: 2px 2px 0 var(--ink);
+  }
+  /* Gated buttons (#start-btn, #submit-rating-btn, #deck-save-btn) must LOOK gated:
+     dimmed, flat cursor, and a shallower shadow so they read as unpressable — still
+     fully neo-brutalist (ink border + hard offset shadow stay). */
+  button:disabled {
+    opacity: 0.55;
+    cursor: default;
+    box-shadow: 3px 3px 0 var(--ink);
   }
   button.primary { background: #ffeb3b; }
   button.danger  { background: #ff5252; color: #fff; }
@@ -174,7 +212,7 @@
   .ring-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
   .ring-bg { fill: none; stroke: rgba(255,255,255,0.3); stroke-width: 14; }
   .ring-fg { fill: none; stroke: #ffeb3b; stroke-width: 14; stroke-linecap: round;
-             transition: stroke-dashoffset 1s linear, stroke 0.4s ease; }
+             transition: stroke-dashoffset 0.2s linear, stroke 0.4s ease; }
   .ring-num {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
@@ -194,6 +232,93 @@
     from { transform: scale(0.4) rotate(-30deg); opacity: 0; }
     to   { transform: scale(1) rotate(0); opacity: 1; }
   }
+
+  /* PROMPT DECK (Phase 3): the "Go nuts like…" line on the intro screen + a compact
+     echo above the ring. Text-only on purpose — no panel — but the prompt/skip/pill
+     stack made the intro tall enough to reach the mascot's corner on small phones,
+     so intro joins the mascot reserve/bow-out lists (see MASCOT notes). */
+  .prompt-lead {
+    font-size: clamp(18px, 3.5vw, 26px);
+    color: var(--paper);
+    text-shadow: 2px 2px 0 var(--ink);
+  }
+  #intro-prompt-text {
+    font-size: clamp(26px, 6vw, 44px);
+    font-weight: bold;
+    color: #ffeb3b;
+    text-shadow: 3px 3px 0 var(--ink);
+    max-width: min(92vw, 560px);
+    margin: 2px 0 4px;
+    transform: rotate(-1deg);
+  }
+  #skip-prompt-btn { font-size: 17px; padding: 8px 18px; box-shadow: 3px 3px 0 var(--ink); }
+  #timer-screen .name { margin-bottom: 4px; }   /* the prompt line sits tight under the performer */
+  #timer-prompt {
+    font-size: clamp(16px, 3.5vw, 24px);
+    color: var(--paper);
+    text-shadow: 2px 2px 0 var(--ink);
+    max-width: min(92vw, 560px);
+  }
+
+  /* PASS SCREEN (Phase 3.4): the private-rating hand-off interstitial. Same header
+     stack as the timer screen; a compact centered action screen (no panel). Its tall
+     button stack DOES reach the mascot's corner on small phones, so it joins the
+     mascot reserve/bow-out lists below; the pose-watch rule for
+     body[data-state="pass"] was pre-wired in Phase 2. */
+  #pass-screen .pass-emoji { font-size: clamp(64px, 16vw, 120px); }
+  #pass-rate-btn {
+    max-width: 100%;           /* a max-length name at the 28px clamp floor beats 320px — never overflow the screen */
+    overflow-wrap: anywhere;   /* …and an unbreakable 14-char name wraps instead of clipping mid-word */
+  }
+  #pass-screen .now-up {
+    font-size: clamp(28px, 6vw, 48px);
+    color: var(--paper);
+    text-shadow: 3px 3px 0 var(--ink);
+  }
+  #pass-screen .name {
+    font-size: clamp(40px, 10vw, 80px);
+    color: #ffeb3b;
+    text-shadow: 4px 4px 0 var(--ink);
+    margin: 0 0 10px;
+    transform: rotate(-2deg);
+    overflow-wrap: anywhere;   /* a max-length name at the clamp floor still beats 320px — wrap, never clip */
+  }
+
+  /* ROUND END (Phase 3.5): the between-rounds scoreboard. Reuses .scoreboard wholesale;
+     the screen is a panel screen, so it joins the mascot reserve/bow-out lists below. */
+  #roundend-screen .roundend-emoji { font-size: clamp(56px, 14vw, 100px); }
+  .roundend-title {
+    font-size: clamp(32px, 8vw, 64px);
+    color: #ffeb3b;
+    text-shadow: 4px 4px 0 var(--ink);
+    margin: 6px 0 0;
+    transform: rotate(-2deg);
+  }
+  #roundend-screen .scoreboard { margin-top: 16px; }
+
+  /* NUT-OFF (Phase 3.3): the sudden-death tie announcement. A compact centered action
+     screen (no panel) like pass-screen — and like pass-screen its title/names/button
+     stack reaches the mascot's corner on small phones, so it joins the mascot
+     reserve/bow-out lists below. */
+  .nutoff-title {
+    font-size: clamp(30px, 8vw, 60px);
+    color: #ffeb3b;
+    text-shadow: 4px 4px 0 var(--ink);
+    margin: 6px 0 0;
+    transform: rotate(-2deg);
+  }
+  #nutoff-names {
+    font-size: clamp(26px, 7vw, 48px);
+    font-weight: bold;
+    color: var(--paper);
+    text-shadow: 3px 3px 0 var(--ink);
+    margin: 8px 0 2px;
+    overflow-wrap: anywhere;   /* two max-length names + " vs " always wrap, never clip */
+  }
+
+  /* Multi-round intro tag (Phase 3.5) + NUT-OFF banner (3.3): pills above the intro name */
+  #intro-round, #intro-nutoff { margin-bottom: 8px; font-weight: bold; }
+  #intro-nutoff { background: var(--bg2); }
 
   /* RATING SCREEN */
   .rating-title {
@@ -238,6 +363,7 @@
   }
   .winner-name {
     font-size: clamp(48px, 12vw, 120px);
+    overflow-wrap: anywhere;   /* a max-length name at the 48px floor beats a 320px viewport — wrap, never clip */
     color: #ffeb3b;
     text-shadow:
       5px 5px 0 var(--ink),
@@ -265,20 +391,100 @@
   .scoreboard ol { padding-left: 28px; margin: 0; text-align: left; }
   .scoreboard li { font-size: 20px; padding: 4px 0; font-weight: bold; }
 
+  /* Crew callout (Phase 3.7): the "Nth title" line under the winner's score */
+  #crew-line {
+    font-size: clamp(16px, 3.5vw, 24px);
+    color: var(--paper);
+    text-shadow: 2px 2px 0 var(--ink);
+    font-weight: bold;
+    margin-top: 8px;
+  }
+
+  /* Superlatives (Phase 3.6): pill rows under the final scoreboard */
+  #superlatives {
+    margin-top: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+    max-width: min(92vw, 460px); width: 100%;
+  }
+  #superlatives[hidden] { display: none; }   /* the flex display would beat the hidden attr */
+  .sup-row {
+    background: rgba(255, 250, 240, 0.92);
+    border: 3px solid var(--ink);
+    border-radius: 22px;
+    padding: 8px 18px;
+    box-shadow: 4px 4px 0 var(--ink);
+    font-size: 15px;
+    line-height: 1.35;
+  }
+  .sup-row .sup-title { color: var(--bg4); }
+  .sup-row .sup-detail { opacity: 0.8; font-size: 13px; }
+
+  /* HALL OF FAME (Phase 3.7): a setup-screen toggle listing gonuts.hof entries */
+  #hof-btn { font-size: 17px; padding: 10px 22px; box-shadow: 4px 4px 0 var(--ink); }
+  #hof-panel { margin-top: 4px; }
+  #hof-panel h3 { margin: 0 0 8px; font-size: 20px; }
+  #hof-panel ol { padding-left: 24px; margin: 0; text-align: left; }
+  #hof-panel li { font-size: 16px; font-weight: bold; padding: 3px 0; }
+  #hof-panel li .small { font-weight: normal; display: block; }
+
+  /* TEAM MODE (Phase 4.3): the setup toggle + per-row 🔴🔵 badges + the winner screen's
+     members line. A badge tap cycles its row through TEAM_META; individual mode renders
+     none of this (the whole feature sits behind the setup teamMode flag / game.teams). */
+  #team-toggle { font-size: 17px; padding: 8px 18px; box-shadow: 3px 3px 0 var(--ink); }
+  .team-badge {
+    background: #fff; border: 2px solid var(--ink); border-radius: 50%;
+    width: 36px; height: 36px; font-size: 16px; padding: 0; line-height: 1;
+    box-shadow: 2px 2px 0 var(--ink); margin: 0 6px 0 0; flex-shrink: 0;
+  }
+  /* Badged rows squeeze the name between the 36px badge and the × button — on a 320px
+     viewport the roster's 20px font broke names mid-word, so teamed rows shrink to
+     17px and trade row padding for name width; overflow-wrap stays the fallback for
+     the widest 14-char names, which now wrap once instead of twice. */
+  .player-list li.teamed { font-size: 17px; padding: 10px 10px; }
+  .player-list li.teamed span { flex: 1; text-align: left; overflow-wrap: anywhere; }
+  #winner-members {
+    font-size: clamp(18px, 4vw, 30px);
+    color: var(--paper);
+    text-shadow: 2px 2px 0 var(--ink);
+    font-weight: bold;
+    margin: 0 0 6px;
+    overflow-wrap: anywhere;   /* four max-length names never clip on a 320px viewport */
+  }
+  .scoreboard li .small { display: block; font-weight: normal; }   /* team rows: members under the team line */
+
+  /* SETUP FEEDBACK */
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20%      { transform: translateX(-8px); }
+    40%      { transform: translateX(8px); }
+    60%      { transform: translateX(-6px); }
+    80%      { transform: translateX(6px); }
+  }
+  .shake { animation: shake 0.3s ease; }   /* the name input — and START on a team-validation rejection (4.3) */
+  .name-error {
+    color: #c62828;
+    font-weight: bold;
+    font-size: 16px;
+    min-height: 1.3em;
+    margin-top: 8px;
+  }
+
+  /* RESUME BANNER */
+  .resume-banner { margin-bottom: 20px; background: #ffeb3b; }
+  .resume-msg { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+
   /* CONFETTI */
   canvas#confetti {
     position: fixed; inset: 0; pointer-events: none; z-index: 999;
   }
+  /* Only the winner and rating screens show confetti (winner bursts + the 5-star
+     micro-burst, G-UX8): a transition away can cancel the rafLoop mid-air, and this
+     keeps any frozen frame from overlaying a confetti-less screen. enterRating wipes
+     the canvas so a frozen micro-burst never bleeds into the next rater's turn. */
+  body:not([data-state="winner"]):not([data-state="rating"]) canvas#confetti { display: none; }
 
-  /* GET READY OVERLAY */
-  #ready-overlay {
-    position: fixed; inset: 0;
-    display: none;
-    align-items: center; justify-content: center;
-    background: rgba(0,0,0,0.5);
-    z-index: 50;
-  }
-  #ready-overlay.active { display: flex; }
+  /* COUNTDOWN SCREEN (the old ready overlay, promoted to a real screen) */
+  #countdown-screen { background: rgba(0,0,0,0.5); }
   #ready-num {
     font-size: clamp(120px, 30vw, 280px);
     color: #ffeb3b;
@@ -291,9 +497,178 @@
     100% { transform: scale(1) rotate(0); opacity: 1; }
   }
 
+  /* MASCOT (G-UX3): the peanut cheers from the bottom-left corner. Poses swap PURELY
+     via body[data-state] display-toggles on the <g id="pose-*"> layers — zero JS, zero
+     machine impact. It paints UNDER the active screen (.screen.active carries z-index:1)
+     so panels and buttons are never obscured, and pointer-events:none means it can never
+     eat a tap either. Countdown is the one exception: that screen's dimmed backdrop would
+     gray the hype pose out, and it holds nothing but the centered 3-2-1 number, so the
+     mascot pops above it there. The bob animation is killed wholesale by the .test and
+     prefers-reduced-motion rules below (both match every element). */
+  #mascot {
+    position: fixed; z-index: 0; pointer-events: none;
+    left: 8px; left: calc(8px + env(safe-area-inset-left, 0px));
+    bottom: 6px; bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    width: clamp(88px, 26vmin, 120px); height: auto;
+    animation: mascotBob 2.6s ease-in-out infinite;
+  }
+  /* Screens whose content can reach the corner reserve the mascot's corner: their
+     panels/buttons would otherwise sit on top of the peanut (it paints under screens,
+     so it vanishes head-first). The reserve tracks the mascot's own clamp() so small
+     phones give up less space. Phase 3 content growth pulled intro (prompt + skip +
+     pills), pass (tall dynamic-label button), and nutoff (title/names/button stack)
+     into the corner on 320px-class viewports, so they joined the lists; only
+     countdown (bare centered number; mascot pops ABOVE it) and timer (ring is
+     centered, Stop is narrow) still keep the compact padding. */
+  #setup-screen, #intro-screen, #pass-screen, #rating-screen,
+  #roundend-screen, #nutoff-screen, #winner-screen {
+    padding-bottom: 134px;
+    padding-bottom: calc(clamp(88px, 26vmin, 120px) + 14px + env(safe-area-inset-bottom, 0px));
+  }
+  body[data-state="countdown"] #mascot { z-index: 2; }
+  @keyframes mascotBob {
+    0%, 100% { transform: translateY(0) rotate(-2deg); }
+    50%      { transform: translateY(-7px) rotate(2deg); }
+  }
+  #mascot g[id^="pose-"] { display: none; }   /* page CSS owns the pose toggle */
+  body[data-state="setup"] #pose-idle,
+  body[data-state="intro"] #pose-idle,
+  body[data-state="countdown"] #pose-hype,
+  body[data-state="performing"] #pose-hype,
+  body[data-state="pass"] #pose-watch,        /* Phase 3 state — wired ahead of time */
+  body[data-state="rating"] #pose-watch,
+  body[data-state="roundEnd"] #pose-idle,     /* between rounds: neutral cheer next to the scoreboard */
+  body[data-state="nutoff"] #pose-hype,       /* sudden death announced: maximum hype (Phase 3.3) */
+  body[data-state="winner"] #pose-crown { display: inline; }
+  /* Crowded viewports: when the active screen's content (measured WITH the reserve in
+     place) can't fit the viewport, its panels would scroll over the corner and reduce
+     the peanut to a ghost behind the 92%-opaque panel — a fixed height cutoff can't
+     catch this (a 5-player winner scoreboard overflows even tall phones; an empty
+     setup fits short ones). syncMascot() stamps body.crowded after every transition,
+     roster render, and resize; on the panel states the peanut then bows out and the
+     reserve is returned. Poses remain pure body[data-state] CSS (G-UX3). */
+  body.crowded[data-state="setup"] #mascot,
+  body.crowded[data-state="intro"] #mascot,
+  body.crowded[data-state="pass"] #mascot,
+  body.crowded[data-state="rating"] #mascot,
+  body.crowded[data-state="roundEnd"] #mascot,
+  body.crowded[data-state="nutoff"] #mascot,
+  body.crowded[data-state="winner"] #mascot { display: none; }
+  body.crowded #setup-screen, body.crowded #intro-screen, body.crowded #pass-screen,
+  body.crowded #rating-screen, body.crowded #roundend-screen,
+  body.crowded #nutoff-screen, body.crowded #winner-screen {
+    padding-bottom: 20px;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+  /* Cramped viewports (landscape phones): the corner is real estate the game needs. */
+  @media (max-height: 460px) { #mascot { display: none; } }
+
   .small { font-size: 14px; opacity: 0.9; }
-  .footer-btn { position: fixed; top: 12px; left: 12px; z-index: 10;
-                font-size: 16px; padding: 8px 14px; box-shadow: 3px 3px 0 var(--ink); }
+  /* Fixed chrome respects the notch/home-indicator (G-UX7): plain fallbacks first,
+     then env()-aware overrides. #reset-btn sits top-left; the Phase 2 #sound-btn
+     mirrors it top-right via .footer-btn.right. */
+  .footer-btn { position: fixed; z-index: 10;
+                font-size: 16px; padding: 8px 14px; box-shadow: 3px 3px 0 var(--ink);
+                top: 12px;
+                top: calc(12px + env(safe-area-inset-top, 0px));
+                transition: opacity 0.2s ease; }
+  /* A scrolled-away screen slides interactive rows under the fixed corner chrome, so
+     the chrome bows out (untappable too) while the ACTIVE screen is off its top —
+     syncChrome() stamps body.scrolled from one boot-registered scroll listener, and
+     the chrome is back the moment scrollTop returns to 0 (the opacity transition is
+     the only debounce — no timers). */
+  body.scrolled .footer-btn { opacity: 0; pointer-events: none; }
+  #reset-btn { left: 12px; left: calc(12px + env(safe-area-inset-left, 0px)); }
+  .footer-btn.right { right: 12px; right: calc(12px + env(safe-area-inset-right, 0px)); }
+  /* The settings gear sits left of #sound-btn and appears ONLY on the idle screens
+     (setup/winner) — the sheet is reachable only from there (DESIGN.md §2 overlay policy). */
+  #settings-btn { display: none; right: 76px; right: calc(76px + env(safe-area-inset-right, 0px)); }
+  body[data-state="setup"] #settings-btn,
+  body[data-state="winner"] #settings-btn { display: block; }
+
+  /* SETTINGS SHEET + DECK EDITOR SHEET (overlays, NOT states: own no timers, never
+     navigate — DESIGN.md §2). The deck editor (Phase 4.1) reuses the sheet pattern
+     wholesale: same backdrop, same dvh-capped scrollable .sheet-panel, same modal dance. */
+  #settings-sheet, #deck-editor-sheet { position: fixed; inset: 0; z-index: 600; }
+  #settings-sheet[hidden], #deck-editor-sheet[hidden] { display: none; }
+  #sheet-backdrop, #deck-editor-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+  .sheet-panel {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--paper);
+    border-top: 5px solid var(--ink);
+    border-radius: 28px 28px 0 0;
+    padding: 20px 20px 28px;
+    padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+    text-align: center;
+    animation: sheetUp 0.22s ease;
+    /* The Phase 3 pickers made the sheet taller than short/landscape viewports; a
+       bottom-anchored panel clips off the TOP, so without this the turn/rounds/deck
+       rows would be unreachable (no scroll). Cap it to the viewport and scroll inside. */
+    max-height: 100vh;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  @keyframes sheetUp {
+    from { transform: translateY(40px); opacity: 0; }
+    to   { transform: translateY(0); opacity: 1; }
+  }
+  .sheet-panel h3 { margin: 0 0 12px; font-size: 24px; }
+  .sheet-toggle { display: block; width: min(80vw, 320px); margin: 8px auto; }
+  /* Segmented pickers (Phase 3.5): turn length / rounds / deck. Pure setSetting()
+     writes — the sheet only opens from setup/winner (gear is CSS-gated above), and
+     game.settings is a frozen snapshot, so picks only ever shape the NEXT game. */
+  .sheet-label { font-size: 18px; font-weight: bold; margin: 12px 0 4px; }
+  .seg { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .seg button {
+    font-size: 17px; padding: 8px 18px; margin: 0;
+    border-width: 3px; border-radius: 14px; box-shadow: 3px 3px 0 var(--ink);
+  }
+  .seg button[aria-pressed="true"] { background: #ffeb3b; }
+  .sheet-hint { font-size: 14px; opacity: 0.75; margin: 12px 0 4px; }
+
+  /* CUSTOM DECKS (Phase 4.1): manage rows under the deck picker + the editor sheet's
+     form. Deck names are hostile user input — they only ever render via textContent
+     (picker buttons, manage rows) or attribute values (aria-labels), never innerHTML. */
+  #deck-manage-list { margin: 0 auto; max-width: 400px; }   /* zero height while no custom decks exist */
+  .deck-row { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; }
+  .deck-row-name { flex: 1; min-width: 0; text-align: left; font-weight: bold;
+                   font-size: 16px; overflow-wrap: anywhere; }   /* an unbreakable 24-char name wraps, never clips */
+  .deck-row button {
+    font-size: 15px; padding: 6px 14px; margin: 0;
+    border-width: 3px; border-radius: 12px; box-shadow: 2px 2px 0 var(--ink);
+  }
+  #deck-name-input, #deck-prompts-input { display: block; width: 100%; max-width: 400px; margin: 4px auto 0; }
+  #deck-prompts-input {
+    font-family: inherit; font-size: 16px;   /* 16px floor: iOS Safari never auto-zooms the focused field */
+    min-height: 6.5em; resize: vertical;
+    padding: 12px 14px; border: 4px solid var(--ink); border-radius: 18px;
+    background: var(--paper); color: var(--ink); outline: none;
+  }
+  #deck-prompts-input:focus { box-shadow: 0 0 0 4px #ffeb3b; }
+  .deck-count { font-size: 15px; font-weight: bold; color: #c62828; min-height: 1.3em; margin: 8px 0 2px; }
+  .deck-count.ok { color: #2e7d32; }
+
+  /* A11y (G-UX5): visually-hidden live region + no focus ring on programmatically
+     focused headings (they carry tabindex="-1"; keyboard-tabbable controls keep theirs). */
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  [tabindex="-1"]:focus { outline: none; }
+
+  /* REDUCED MOTION (G-UX4): static gradient; no wobble/pulse/bounce/screenIn/pop/etc.
+     Same selector breadth as the .test rule below, but only animations — the ring's
+     stroke transition stays (it conveys time, and it tracks a 200ms repaint anyway). */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; }
+  }
+
+  /* TEST MODE (?test=1): kill animations/transitions so Playwright gets stable boxes */
+  .test *, .test *::before, .test *::after {
+    animation: none !important; transition: none !important;
+  }
 </style>
 </head>
 <body>
@@ -302,47 +677,88 @@
 
 <!-- SETUP -->
 <section id="setup-screen" class="screen active">
-  <h1>Go Nuts!</h1>
+  <h1 tabindex="-1">Go Nuts!</h1>
   <div class="subtitle">The craziest player wins.</div>
+  <div class="panel resume-banner" id="resume-banner" hidden>
+    <div class="resume-msg" id="resume-msg">Game in progress.</div>
+    <div class="row">
+      <button id="resume-btn" class="primary">▶ Resume</button>
+      <button id="discard-btn">Discard</button>
+    </div>
+  </div>
   <div class="panel">
     <div class="row">
       <input id="name-input" placeholder="Player name" maxlength="14" autocomplete="off" />
       <button id="add-btn" class="primary">+ Add</button>
     </div>
+    <div class="name-error" id="name-error" aria-live="polite"></div>
     <ul id="player-list" class="player-list"></ul>
+    <!-- Team mode (Phase 4.3): shown from TEAM_MIN_PLAYERS up; badges cycle on tap -->
+    <!-- "Teams:", not "Team mode:" — the longer label wrapped to two lines at 320px -->
+    <button id="team-toggle" aria-pressed="false" hidden>🔴🔵 Teams: Off</button>
     <button id="start-btn" class="go" disabled>START!</button>
     <div class="small">Add at least 2 players</div>
+  </div>
+  <!-- HALL OF FAME (Phase 3.7): pure DOM toggle listing gonuts.hof entries -->
+  <button id="hof-btn" aria-expanded="false">🏆 Hall of Fame</button>
+  <div class="panel" id="hof-panel" hidden>
+    <h3>🏆 Hall of Fame</h3>
+    <ol id="hof-list"></ol>
+    <div class="small" id="hof-empty">No champions yet — go nuts!</div>
   </div>
 </section>
 
 <!-- TURN INTRO -->
 <section id="intro-screen" class="screen">
+  <div class="pill" id="intro-nutoff" hidden>🥜 NUT-OFF — sudden death!</div>
+  <div class="pill" id="intro-round" hidden>Round 1 of 2</div>
   <div class="now-up">Next up...</div>
-  <h2 class="name" id="intro-name">—</h2>
-  <div class="subtitle">Get ready to GO NUTS for 15 seconds!</div>
+  <h2 class="name" id="intro-name" tabindex="-1">—</h2>
+  <div class="prompt-lead">Go nuts like…</div>
+  <div id="intro-prompt-text">—</div>
+  <button id="skip-prompt-btn" hidden>↻ Skip</button>
+  <div class="subtitle">Get ready to GO NUTS for <span id="intro-secs">…</span> seconds!</div>
   <button id="begin-turn-btn" class="go">I'M READY!</button>
+</section>
+
+<!-- COUNTDOWN -->
+<section id="countdown-screen" class="screen">
+  <div id="ready-num">3</div>
 </section>
 
 <!-- TIMER -->
 <section id="timer-screen" class="screen">
   <div class="now-up">Now going nuts:</div>
-  <h2 class="name" id="timer-name">—</h2>
+  <h2 class="name" id="timer-name" tabindex="-1">—</h2>
+  <div id="timer-prompt">—</div>
   <div class="ring-wrap">
     <svg viewBox="0 0 200 200">
       <circle class="ring-bg" cx="100" cy="100" r="90"></circle>
       <circle class="ring-fg" id="ring-fg" cx="100" cy="100" r="90"
               stroke-dasharray="565.48" stroke-dashoffset="0"></circle>
     </svg>
-    <div class="ring-num" id="ring-num">15</div>
+    <div class="ring-num" id="ring-num" aria-hidden="true">—</div>
+    <!-- A11y (G-UX5): screen readers hear only this live region, updated on whole-second
+         edges <= ANNOUNCE_AT_S — the visual number repaints every 200ms and would chatter. -->
+    <div class="sr-only" id="ring-live" aria-live="polite"></div>
   </div>
   <div class="crazy-word" id="crazy-word">LET'S GO!</div>
   <button id="stop-btn" class="danger">Stop</button>
 </section>
 
+<!-- PASS (Phase 3.4: the private-rating hand-off — the interstitial IS the privacy mechanism) -->
+<section id="pass-screen" class="screen">
+  <div class="pass-emoji" aria-hidden="true">🤫</div>
+  <div class="now-up">Hand the phone to</div>
+  <h2 class="name" id="pass-name" tabindex="-1">—</h2>
+  <div class="subtitle">Rate in secret — no peeking!</div>
+  <button id="pass-rate-btn" class="go">I'm ready — rate!</button>
+</section>
+
 <!-- RATING -->
 <section id="rating-screen" class="screen">
   <div class="rating-title">How crazy was</div>
-  <h2 class="rating-name" id="rate-name">—</h2>
+  <h2 class="rating-name" id="rate-name" tabindex="-1">—</h2>
   <div class="rater" id="rater-label">Rater 1 of 1</div>
   <div class="panel">
     <div class="stars" id="stars"></div>
@@ -351,35 +767,289 @@
   </div>
 </section>
 
+<!-- ROUND END (Phase 3.5: the between-rounds running scoreboard — owns no timers) -->
+<section id="roundend-screen" class="screen">
+  <div class="roundend-emoji" aria-hidden="true">🌰</div>
+  <h2 class="roundend-title" id="roundend-title" tabindex="-1">Round 1 done!</h2>
+  <div class="scoreboard">
+    <h3>🌰 Scores so far</h3>
+    <ol id="round-scores"></ol>
+  </div>
+  <button id="next-round-btn" class="go">Round 2!</button>
+</section>
+
+<!-- NUT-OFF (Phase 3.3: sudden-death tie announcement — owns no timers; its button is the only exit) -->
+<section id="nutoff-screen" class="screen">
+  <!-- &nbsp; glues each 🥜 to its neighboring word so a narrow viewport never orphan-wraps
+       a lone peanut onto its own line (the S6 title assertion matches the inner text). -->
+  <h2 class="nutoff-title" id="nutoff-title" tabindex="-1">🥜&nbsp;IT'S A NUT-OFF!&nbsp;🥜</h2>
+  <div id="nutoff-names">—</div>
+  <div class="subtitle">Dead tie! Shorter turns — the rest of the crew decides.</div>
+  <button id="nutoff-btn" class="go">BREAK THE TIE!</button>
+</section>
+
 <!-- WINNER -->
 <section id="winner-screen" class="screen">
   <div class="crown">👑</div>
-  <div class="subtitle">CRAZIEST OF THEM ALL</div>
-  <h2 class="winner-name" id="winner-name">—</h2>
+  <div class="subtitle" id="winner-subtitle">CRAZIEST OF THEM ALL</div>
+  <h2 class="winner-name" id="winner-name" tabindex="-1">—</h2>
+  <!-- Team mode (Phase 4.3): the crowned team's members, listed under the team name -->
+  <div id="winner-members" hidden>—</div>
   <div class="winner-score" id="winner-score">— stars</div>
+  <div id="crew-line" hidden>—</div>
   <div class="scoreboard">
     <h3>🏆 Final Scores</h3>
     <ol id="final-scores"></ol>
   </div>
+  <div id="superlatives" hidden></div>
   <div class="row" style="margin-top:20px;">
+    <button id="share-btn">📸 Share results</button>
     <button id="play-again-btn" class="primary">Play Again (Same Crew)</button>
     <button id="new-game-btn">New Game</button>
   </div>
 </section>
 
-<button id="reset-btn" class="footer-btn">↺ Reset</button>
+<!-- MASCOT (G-UX3): one shared peanut body in <defs>, four toggleable pose layers.
+     Which pose shows is pure body[data-state] CSS (see the MASCOT style block) — no JS
+     ever touches this node. Decorative only, so it is hidden from assistive tech. -->
+<svg id="mascot" viewBox="0 0 200 200" width="200" height="200" fill="none"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+<defs>
+<path id="pb" d="M100 36C82 36 70 48 70 62c0 10 10 16 10 25 0 9-14 15-14 29 0 18 15 30 34 30s34-12 34-30c0-14-14-20-14-29 0-9 10-15 10-25 0-14-12-26-30-26Z"/>
+<g id="bod">
+<use href="#pb" x="4" y="4" fill="#1a1a2e"/>
+<use href="#pb" fill="#ffbe0b" stroke="#1a1a2e" stroke-width="5"/>
+<g stroke="#1a1a2e" stroke-width="2.5" opacity=".28">
+<path d="M74 108q26 12 52 0M78 126q22 10 44 0M88 100q5 22-1 42M112 100q-5 22 1 42"/>
+</g>
+</g>
+</defs>
+<g id="pose-idle">
+<g stroke="#1a1a2e" stroke-width="10"><path d="M90 138v24M110 138v24"/></g>
+<ellipse cx="83" cy="166" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4"/>
+<ellipse cx="117" cy="166" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4"/>
+<g stroke="#1a1a2e" stroke-width="10"><path d="M80 96C58 102 54 116 62 126M120 96c22-6 30-24 23-36"/></g>
+<circle cx="63" cy="129" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<circle cx="141" cy="57" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<use href="#bod"/>
+<g stroke="#1a1a2e" stroke-width="3.5"><path d="M83 47q7-5 13 0M104 47q7-5 13 0"/></g>
+<circle cx="90" cy="58" r="6.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="110" cy="58" r="6.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="91" cy="59" r="2.8" fill="#1a1a2e"/><circle cx="111" cy="59" r="2.8" fill="#1a1a2e"/>
+<circle cx="79" cy="67" r="4" fill="#ff006e" opacity=".4"/><circle cx="121" cy="67" r="4" fill="#ff006e" opacity=".4"/>
+<path d="M87 71q13 12 26 0" stroke="#1a1a2e" stroke-width="4"/>
+<path d="M95 76h10v4q0 5-5 5t-5-5z" fill="#fffaf0" stroke="#1a1a2e" stroke-width="2.5"/>
+</g>
+<g id="pose-hype">
+<g stroke="#1a1a2e" stroke-width="3.5"><path d="M22 62q-7 10 0 20M180 56q7 10 0 20M14 70q-4 6 0 12"/></g>
+<g transform="rotate(-8 100 100)">
+<g stroke="#1a1a2e" stroke-width="10"><path d="M92 138l-8 25M110 138c12 10 22 6 32 14"/></g>
+<ellipse cx="81" cy="167" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4"/>
+<ellipse cx="148" cy="157" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4" transform="rotate(24 148 157)"/>
+<g stroke="#1a1a2e" stroke-width="10"><path d="M80 92C54 88 62 62 42 52M120 92c30-4 20-34 40-46"/></g>
+<circle cx="39" cy="49" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<circle cx="163" cy="43" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<use href="#bod"/>
+<g stroke="#1a1a2e" stroke-width="3.5"><path d="M81 42q7-6 14-1M105 41q7-5 14 1"/></g>
+<circle cx="89" cy="56" r="7.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="111" cy="56" r="7.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="89" cy="54" r="3" fill="#1a1a2e"/><circle cx="111" cy="54" r="3" fill="#1a1a2e"/>
+<ellipse cx="100" cy="78" rx="10" ry="11" fill="#1a1a2e" stroke="#1a1a2e" stroke-width="3"/>
+<path d="M91 80q9 11 18 0a9 8 0 0 1-18 0z" fill="#ff006e"/>
+</g>
+<path d="M26 104l3 7 7 3-7 3-3 7-3-7-7-3 7-3z" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<path d="M176 92l3 7 7 3-7 3-3 7-3-7-7-3 7-3z" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<path d="M108 8l2.5 6 6 2.5-6 2.5-2.5 6-2.5-6-6-2.5 6-2.5z" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+</g>
+<g id="pose-watch">
+<g stroke="#1a1a2e" stroke-width="10"><path d="M92 138l-5 24M108 138l5 24"/></g>
+<ellipse cx="85" cy="166" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4"/>
+<ellipse cx="115" cy="166" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4"/>
+<g stroke="#1a1a2e" stroke-width="10"><path d="M80 96C64 104 66 118 78 124M120 96c16 8 14 22 2 28"/></g>
+<use href="#bod"/>
+<circle cx="86" cy="106" r="5" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<circle cx="95" cy="101" r="5" fill="#fffaf0" stroke="#1a1a2e" stroke-width="2.5"/>
+<circle cx="104" cy="105" r="5" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<circle cx="112" cy="101" r="5" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<path d="M80 108h40l-4 36H84z" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<path d="M91 112l-2 28M100 112v28M109 112l2 28" stroke="#ff006e" stroke-width="5"/>
+<circle cx="79" cy="124" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<circle cx="121" cy="124" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<path d="M122 98q24-16 15-46" stroke="#1a1a2e" stroke-width="2.5" stroke-dasharray="4 5" opacity=".6"/>
+<circle cx="138" cy="45" r="4.5" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="2.5"/>
+<g stroke="#1a1a2e" stroke-width="3.5"><path d="M83 46q7-4 13 0M105 44q7-5 13 2"/></g>
+<circle cx="90" cy="58" r="6.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="110" cy="58" r="6.5" fill="#fff" stroke="#1a1a2e" stroke-width="3"/>
+<circle cx="92.5" cy="56.5" r="2.8" fill="#1a1a2e"/><circle cx="112.5" cy="56.5" r="2.8" fill="#1a1a2e"/>
+<ellipse cx="102" cy="76" rx="6" ry="7" fill="#1a1a2e"/>
+</g>
+<g id="pose-crown">
+<g fill="#ff006e"><rect x="36" y="58" width="7" height="7" transform="rotate(20 40 62)"/><rect x="162" y="126" width="7" height="7" transform="rotate(-15 165 130)"/></g>
+<g fill="#3a86ff"><circle cx="52" cy="30" r="4"/><rect x="156" y="66" width="7" height="7" transform="rotate(30 160 70)"/></g>
+<g fill="#8338ec"><circle cx="30" cy="118" r="4"/><rect x="138" y="22" width="7" height="7" transform="rotate(15 141 26)"/></g>
+<circle cx="66" cy="12" r="3.5" fill="#fb5607"/><circle cx="176" cy="104" r="3.5" fill="#fb5607"/>
+<g stroke="#1a1a2e" stroke-width="10"><path d="M92 138l-9 22M108 138l9 22"/></g>
+<ellipse cx="78" cy="164" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4" transform="rotate(-18 78 164)"/>
+<ellipse cx="122" cy="164" rx="12" ry="7" fill="#3a86ff" stroke="#1a1a2e" stroke-width="4" transform="rotate(18 122 164)"/>
+<g stroke="#1a1a2e" stroke-width="10"><path d="M80 92C60 82 54 62 46 44M120 92c20-10 26-30 34-48"/></g>
+<circle cx="44" cy="40" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<circle cx="156" cy="40" r="8" fill="#fffaf0" stroke="#1a1a2e" stroke-width="4"/>
+<use href="#bod"/>
+<g stroke="#1a1a2e" stroke-width="4"><path d="M100 1v6M68 5l4 7M132 5l-4 7"/></g>
+<path d="M76 36l4-20 12 10 8-14 8 14 12-10 4 20z" fill="#ffeb3b" stroke="#1a1a2e" stroke-width="4"/>
+<circle cx="80" cy="15" r="3" fill="#ff006e"/><circle cx="100" cy="11" r="3" fill="#ff006e"/><circle cx="120" cy="15" r="3" fill="#ff006e"/>
+<g stroke="#1a1a2e" stroke-width="4"><path d="M83 58q7-9 14 0M103 58q7-9 14 0"/></g>
+<circle cx="79" cy="66" r="4" fill="#ff006e" opacity=".4"/><circle cx="121" cy="66" r="4" fill="#ff006e" opacity=".4"/>
+<path d="M85 69q15 16 30 0" stroke="#1a1a2e" stroke-width="4"/>
+<path d="M95 75h10v4q0 5-5 5t-5-5z" fill="#fffaf0" stroke="#1a1a2e" stroke-width="2.5"/>
+</g>
+</svg>
 
-<!-- READY OVERLAY -->
-<div id="ready-overlay"><div id="ready-num">3</div></div>
+<button id="reset-btn" class="footer-btn">↺ Reset</button>
+<button id="sound-btn" class="footer-btn right" aria-label="Mute sound">🔊</button>
+<button id="settings-btn" class="footer-btn" aria-label="Settings">⚙️</button>
+
+<!-- SETTINGS SHEET (overlay, not a state — pure DOM toggle; DESIGN.md §2/§5).
+     A real modal (G-UX5): dialog semantics for AT, and setSheetOpen() inerts everything
+     behind it, so keyboard/switch users can't reach (or Enter-activate) the game
+     underneath. Escape, the Done button, and a backdrop tap all dismiss it. -->
+<div id="settings-sheet" hidden>
+  <div id="sheet-backdrop"></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <h3 id="sheet-title" tabindex="-1">⚙️ Settings</h3>
+    <!-- Segmented pickers (Phase 3.5): turn/rounds buttons are built once at boot from
+         CONFIG.TURN_CHOICES / CONFIG.ROUND_CHOICES; the deck picker is REBUILT by
+         renderDeckPicker() because custom decks (Phase 4.1) change the registry itself. -->
+    <div class="sheet-label" id="seg-turn-label">⏱️ Turn length</div>
+    <div class="seg" id="seg-turn" role="group" aria-labelledby="seg-turn-label"></div>
+    <div class="sheet-label" id="seg-rounds-label">🔁 Rounds</div>
+    <div class="seg" id="seg-rounds" role="group" aria-labelledby="seg-rounds-label"></div>
+    <div class="sheet-label" id="seg-deck-label">🃏 Deck</div>
+    <div class="seg" id="seg-deck" role="group" aria-labelledby="seg-deck-label"></div>
+    <!-- Custom decks (Phase 4.1): renderDeckPicker() fills the picker above (built-ins +
+         customs + the ➕ New deck button, all one wrapping seg row) and one Edit/Delete
+         row per custom deck here (built-in Classic is neither editable nor deletable). -->
+    <div id="deck-manage-list"></div>
+    <div class="sheet-hint">Pickers apply to the next game.</div>
+    <button id="sheet-sound" class="sheet-toggle" aria-pressed="true">🔊 Sound: On</button>
+    <button id="sheet-haptics" class="sheet-toggle" aria-pressed="true">📳 Haptics: On</button>
+    <button id="sheet-clear-hof" class="sheet-toggle danger">🗑️ Clear Hall of Fame</button>
+    <button id="sheet-close" class="sheet-toggle primary">Done</button>
+  </div>
+</div>
+
+<!-- DECK EDITOR SHEET (Phase 4.1): the same modal pattern as the settings sheet — dialog
+     semantics, inert background, Escape/Cancel/backdrop dismiss, dvh-capped scrollable
+     panel — reached only FROM that sheet (New deck / per-deck Edit), so it inherits the
+     setup/winner gating. One modal at a time: opening it closes the settings sheet, and
+     every USER dismissal reopens it (show() force-closes both on navigation). Writes
+     gonuts.decks (DESIGN.md §8.1); owns no timers, never navigates. -->
+<div id="deck-editor-sheet" hidden>
+  <div id="deck-editor-backdrop"></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="deck-editor-title">
+    <h3 id="deck-editor-title">🃏 New deck</h3>
+    <input id="deck-name-input" placeholder="Deck name" maxlength="24" autocomplete="off" />
+    <div class="sheet-label" id="deck-prompts-label">Prompts — one per line: "Go nuts like…"</div>
+    <textarea id="deck-prompts-input" rows="6" aria-labelledby="deck-prompts-label"
+              placeholder="a llama at a limbo contest&#10;a robot learning to sneeze&#10;…"></textarea>
+    <div class="deck-count" id="deck-count" aria-live="polite">—</div>
+    <button id="deck-save-btn" class="sheet-toggle primary" disabled>💾 Save deck</button>
+    <button id="deck-cancel-btn" class="sheet-toggle">Cancel</button>
+  </div>
+</div>
 
 <script>
 (() => {
-  const $ = (id) => document.getElementById(id);
-  const screens = ['setup', 'intro', 'timer', 'rating', 'winner'];
-  const show = (name) => {
-    screens.forEach(s => $(s + '-screen').classList.toggle('active', s === name));
-  };
+  // ---------- CONFIG ----------
+  const CONFIG = Object.freeze({
+    TURN_SECONDS_DEFAULT: 15,
+    TURN_CHOICES:   [10, 15, 30],          // Phase 3 settings UI
+    ROUND_CHOICES:  [1, 2, 3],
+    NUTOFF_SECONDS: 10,                    // sudden-death turns are shorter
+    COUNTDOWN_STEPS: ['3', '2', '1', 'GO NUTS!'],
+    COUNTDOWN_STEP_MS: 700,
+    WORD_CYCLE_MS:  900,
+    REPAINT_MS:     200,                   // ring repaint cadence — cosmetic only, never counts time
+    URGENT_AT_S:    3,                     // ring red + urgency cues
+    WARN_AT_S:      8,                     // ring orange
+    ANNOUNCE_AT_S:  5,                     // aria-live seconds announcements start here (G-UX5)
+    MIN_PLAYERS:    2,
+    TEAM_MIN_PLAYERS: 4,                   // Phase 4.3: the team-mode toggle appears at this roster size
+    MAX_NAME_LEN:   14,
+    SKIPS_PER_PLAYER: 1,                   // Phase 3 prompt skips
+    DECK_MIN_PROMPTS: 10,                  // Phase 4.1 editor: a custom deck needs at least this many prompts
+    DECK_PROMPT_MAX: 90,                   // Phase 4.1 editor: per-prompt char cap (longer lines truncate)
+    DECK_NAME_MAX: 24,                     // Phase 4.1 editor: deck name cap (mirrors the input's maxlength)
+    RESUME_MAX_AGE_MS: 12 * 3600 * 1000,   // saves older than 12h are silently discarded
+    HOF_MAX_ENTRIES: 20,
+    RING_CIRC: 2 * Math.PI * 90,
+  });
 
+  const KEYS = Object.freeze({             // unversioned key names; each payload carries a `v` field
+    game:     'gonuts.game',
+    settings: 'gonuts.settings',
+    hof:      'gonuts.hof',
+    decks:    'gonuts.decks',              // Phase 4
+  });
+
+  // ---- test flags (parsed once; read only via accessors; never persisted) ----
+  const qp = new URLSearchParams(location.search);
+  const TEST = qp.has('test');             // ?test=1 → deterministic fast mode
+  if (TEST) document.documentElement.classList.add('test');
+  const TEST_TURN = TEST ? Math.max(1, +qp.get('t') || 0) : 0;      // &t=2 → 2s turns
+  const TEST_FAST = TEST && qp.has('fast');                          // &fast=1 → 60ms countdown steps
+  const TEST_SEED = TEST ? (+qp.get('seed') || 0) : 0;               // &seed=42 → deterministic shuffle
+
+  // Accessors — the ONLY way timing values are read:
+  function countdownStepMs() { return TEST_FAST ? 60 : CONFIG.COUNTDOWN_STEP_MS; }
+  function wordCycleMs()     { return TEST_FAST ? 150 : CONFIG.WORD_CYCLE_MS; }
+  function turnSecondsForCurrentTurn() {
+    if (TEST_TURN) return TEST_TURN;
+    if (game?.tiebreak) return Math.min(CONFIG.NUTOFF_SECONDS, game.settings.turnSeconds);
+    return game?.settings.turnSeconds ?? settings.turnSeconds;
+  }
+
+  // ---------- UTIL ----------
+  const $ = (id) => document.getElementById(id);
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  function restartAnim(el) {               // retrigger a CSS animation via forced reflow
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = '';
+  }
+
+  function mulberry32(seed) {              // deterministic PRNG for the seeded test shuffle
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // One PRNG stream for the whole session: &seed=42 makes every shuffle deterministic,
+  // while successive shuffles (order, drawPile, round restarts) still differ from each other.
+  const rand = TEST_SEED ? mulberry32(TEST_SEED) : Math.random;
+
+  function shuffle(arr) {                  // Fisher-Yates on a copy (Phase 3.2) — mulberry32-seeded under TEST
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function range(n) { return Array.from({ length: n }, (_, i) => i); }
+
+  // ---------- COPY & DECKS ----------
   const CRAZY_WORDS = [
     "WIGGLE!", "FLAIL!", "SPIN!", "WOBBLE!", "BOUNCE!",
     "JIGGLE!", "ZOOM!", "FLOP!", "TWIRL!", "SHIMMY!",
@@ -393,185 +1063,820 @@
     "Bonkers!! 🤪",
     "ABSOLUTELY BANANAS!!! 🍌🤯"
   ];
-
-  const state = {
-    players: [],          // [{name, scores: [], total: 0}]
-    turnIndex: 0,
-    raterQueue: [],       // names left to rate the current player
-    currentRating: 0,
-    timer: null,
-    wordTimer: null,
-    timeLeft: 15,
+  // DECKS (DESIGN.md §7): every prompt renders as "Go nuts like… ⟨prompt⟩". ALL prompt
+  // access goes through activeDeck(), which resolves the per-game deckId and merges the
+  // Phase 4 custom-deck storage in UNDER the built-ins (built-in ids always win).
+  const DECKS = {
+    classic: { name: 'Classic', prompts: [
+      "a squirrel who found espresso",
+      "a penguin late for a flight",
+      "a T-rex trying to make a bed",
+      "a rooster who overslept",
+      "a kangaroo stuck in an elevator",
+      "a dog hearing the doorbell for the first time",
+      "a cat stuck in a sweater",
+      "a bee who lost its flowers",
+      "an octopus putting on pants",
+      "a goat discovering stairs",
+      "a chicken crossing a very busy road",
+      "a hamster whose wheel is too fast",
+      "a seagull who spotted your fries",
+      "a horse learning to moonwalk",
+      "a puppy meeting its own tail",
+      "a duck whose pond just froze",
+      "an elephant afraid of a tiny mouse",
+      "a frog auditioning for a rock band",
+      "a moose tangled in holiday lights",
+      "a parrot repeating everything louder",
+      "a turkey who just heard about Thanksgiving",
+      "an ostrich hiding from everything",
+      "a spider whose web keeps breaking",
+      "a fish flopping toward the water",
+      "a raccoon raiding a snack cabinet",
+      "a bull in a china shop",
+      "a sloth trying to hurry",
+      "a woodpecker on a metal pole",
+      "a shark who smells birthday cake",
+      "a mosquito at a swat convention",
+      "a peacock showing off at a party",
+      "a hippo learning ballet",
+      "a snake trying to clap",
+      "a chipmunk with too many acorns in its cheeks",
+      "a lobster escaping the pot",
+      "a sock lost in the dryer looking for its twin",
+      "a popcorn kernel right before it pops",
+      "the last slice of pizza defending itself",
+      "an umbrella turning inside out in the wind",
+      "a toaster launching toast way too high",
+      "a garden hose nobody is holding",
+      "a shopping cart with one wobbly wheel",
+      "an alarm clock furious that you hit snooze",
+      "a fitted sheet refusing to be folded",
+      "a soda bottle that just got shaken up",
+      "an inflatable tube man outside a car dealership",
+      "a mosquito trapped inside a car",
+      "a phone at one percent battery begging for a charger",
+      "a jack-in-the-box that can't wait for the song to end",
+      "a balloon losing all its air at once",
+      "a printer jamming during an important job",
+      "an ice cube dropped down someone's shirt",
+      "a windshield wiper in a hurricane",
+      "a slinky going down an endless staircase",
+      "a lawnmower that won't start on the first pull",
+      "a tea kettle reaching full whistle",
+      "a revolving door going way too fast",
+      "a bowling pin seeing the ball coming",
+      "a blender with the lid left off",
+      "a trampoline meeting its first kid of summer",
+      "an escalator that suddenly becomes stairs",
+      "a pancake being flipped too high",
+      "a washing machine on the spin cycle",
+      "a leaf blower chasing one stubborn leaf",
+      "a mattress being wrestled up a staircase",
+      "a birthday candle refusing to blow out",
+      "a pi\u00f1ata holding on for dear life",
+      "a pool noodle in a sword fight with the wind",
+      "an ice cream cone melting in fast-forward",
+      "a marshmallow expanding in the microwave",
+      "a mime trapped in a shrinking box",
+      "someone walking face-first into a spiderweb",
+      "a slow-motion action hero dodging lasers",
+      "a robot whose batteries are dying",
+      "a cowboy riding an invisible bull",
+      "a scarecrow chasing off its own crows",
+      "a tightrope walker in a windstorm",
+      "a ballerina with the hiccups",
+      "a superhero whose cape is stuck in a door",
+      "a zombie doing jumping jacks",
+      "an opera singer on a trampoline",
+      "a ninja sneaking across a squeaky floor",
+      "a person whose shoes just turned into roller skates",
+      "a caveman seeing fire for the first time",
+      "a puppet whose strings keep tangling",
+      "a firework that keeps almost going off",
+      "a gorilla giving the weather report",
+      "a monkey with an itch it can't reach",
+      "an astronaut on the moon who's late for work",
+      "a dad dancing at a wedding",
+      "a grandma who just won the lottery",
+      "a jellyfish in a hurricane",
+      "a toddler who skipped their nap",
+      "a dog seeing its owner after a year away",
+      "a cat that just spotted a cucumber",
+      "a drummer who lost their drums",
+      "a one-person marching band",
+      "a picnic guest fighting off one fly",
+      "an ice skater who can't stop spinning",
+      "a hiker with ants in their pants",
+      "a mad scientist whose experiment just worked",
+      "a lawn sprinkler in overdrive",
+      "a giraffe learning to limbo",
+      "a barefoot person stepping on a toy brick",
+      "gravity taking the day off",
+      "a sneeze that never quite arrives",
+      "the concept of Monday",
+      "a yawn spreading through a crowd",
+      "wifi trying to reconnect",
+      "static electricity in sock form",
+      "a hiccup that took over a whole body",
+      "an echo lost in a canyon",
+      "a shadow whose person walked away",
+      "the last bubble in a bubble bath",
+      "a whisper trying to become a shout",
+      "the feeling of forgetting a word",
+      "a puddle learning to jump",
+      "the number seven throwing a tantrum",
+      "a lightning bolt with nowhere to strike",
+      "the hokey pokey stuck on repeat",
+      "a snowman discovering summer",
+      "a magnet attracted to everything",
+      "a tumbleweed in rush hour traffic",
+      "the letter Z waking up first",
+      "a raincloud following one person",
+      "the smell of cookies pulling someone across a room",
+      "a broom sweeping itself",
+      "a wave that missed the ocean",
+      "a flamingo who forgot which leg to stand on",
+      "a crab sneaking sideways into a surprise party",
+    ] },
   };
 
-  // ---------- SETUP ----------
+  // Custom decks (Phase 4.1): gonuts.decks rides its OWN key — Reset never clears it;
+  // per-deck delete does (the last delete drops the key). Shape (DESIGN.md §8.1):
+  //   { v: 1, decks: { 'c<epoch36>': { name, prompts: ['…'] } } }
+  // loadDecks() is the ONE validated read path: hostile or malformed storage (wrong v,
+  // missing name, empty/non-string prompts) degrades to "no custom decks", never an error.
+  function loadDecks() {
+    const d = store.get(KEYS.decks);
+    const decks = {};
+    if (d?.v === 1 && d.decks && typeof d.decks === 'object') {
+      for (const [id, deck] of Object.entries(d.decks)) {
+        if (deck && typeof deck.name === 'string' && Array.isArray(deck.prompts)
+            && deck.prompts.length && deck.prompts.every(p => typeof p === 'string')) {
+          decks[id] = deck;
+        }
+      }
+    }
+    return { v: 1, decks };
+  }
+
+  function activeDeck(deckId = game?.settings.deckId ?? settings.deckId) {
+    const all = Object.assign({}, loadDecks().decks, DECKS);  // built-ins win over shadowing custom ids
+    return all[deckId] || all.classic;                        // unknown/deleted deck falls back to classic
+  }
+
+  // ---------- STORE ----------
+  const store = {
+    get(k)    { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+    del(k)    { try { localStorage.removeItem(k); } catch {} },
+  };
+
+  // ---------- SETTINGS ----------
+  const DEFAULT_SETTINGS = {
+    v: 1,
+    turnSeconds: CONFIG.TURN_SECONDS_DEFAULT,   // one of CONFIG.TURN_CHOICES
+    rounds: 1,                                  // one of CONFIG.ROUND_CHOICES
+    sound: true,
+    haptics: true,
+    deckId: 'classic',                          // key into the deck registry (custom ids in Phase 4)
+  };
+  let settings = Object.assign({}, DEFAULT_SETTINGS, store.get(KEYS.settings) || {});
+  function setSetting(k, v) { settings[k] = v; store.set(KEYS.settings, settings); }
+
+  // ---------- AUDIO & HAPTICS ----------
+  // WebAudio-only, zero asset files (DESIGN.md §6). The context is lazily created and
+  // re-resume()d on every cue; the one-time document pointerdown unlock guarantees a
+  // gesture-created context before the first countdown. The settings.sound check lives
+  // inside tone() — the ONLY mute check in the app; call sites never branch.
+  const audio = (() => {
+    let ctx = null;
+    const ensure = () => {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        ctx = ctx || new AC();
+        // Resume anything not running — iOS Safari parks the context in a non-standard
+        // 'interrupted' state after a phone call/Siri and may never auto-resume it; a
+        // 'suspended'-only check would leave audio dead for the rest of the session.
+        if (ctx.state !== 'running') ctx.resume().catch(() => {});  // pre-gesture resume may reject; never a pageerror
+        return ctx;
+      } catch { return null; }
+    };
+    function tone(freq, dur, { type = 'square', gain = 0.14, at = 0, slideTo = null } = {}) {
+      if (!settings.sound) return;                 // the ONLY mute check in the app
+      const c = ensure(); if (!c) return;
+      const t0 = c.currentTime + at;
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t0);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+      g.gain.setValueAtTime(gain, t0);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g).connect(c.destination);
+      o.start(t0); o.stop(t0 + dur + 0.05);
+    }
+    const CUES = {
+      tick:    () => tone(880, 0.08),                                        // 3-2-1 steps
+      go:      () => { tone(523, 0.15); tone(784, 0.25, { at: 0.12 }); },    // 'GO NUTS!'
+      urgent:  () => tone(1174, 0.06, { gain: 0.16 }),                       // last URGENT_AT_S seconds
+      buzzer:  () => tone(200, 0.6, { type: 'sawtooth', slideTo: 100, gain: 0.22 }),  // time up / Stop
+      pop:     (n) => tone(440 + 130 * (n || 1), 0.09, { type: 'triangle' }),// star tap, pitch rises 1..5
+      skip:    () => tone(330, 0.14, { slideTo: 200, type: 'triangle' }),    // prompt skip (3.1)
+      nutoff:  () => [392, 392, 392, 311].forEach((f, i) => tone(f, 0.14, { at: i * 0.16 })),  // tie! (played by enterNutoff)
+      fanfare: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, { at: i * 0.13, type: 'triangle' })),  // winner
+    };
+    return { play(name, arg) { CUES[name]?.(arg); }, unlock: ensure };
+  })();
+  const haptics = { buzz(p) { try { if (settings.haptics) navigator.vibrate?.(p); } catch {} } };
+  document.addEventListener('pointerdown', () => audio.unlock(), { once: true }); /* raw-timer-ok: permanent listener */
+
+  // ---------- WAKE LOCK ----------
+  // Screen wake lock (DESIGN.md §3): held while the game needs an awake screen, released
+  // on idle screens. Pure progressive enhancement — every call is try/catch'd.
+  const wakeLock = (() => {
+    let sentinel = null;
+    let pending = false;
+    const HOLD = ['countdown', 'performing', 'pass', 'rating'];
+    async function acquire() {
+      try {
+        if (sentinel || pending || !navigator.wakeLock) return;
+        pending = true;
+        const s = await navigator.wakeLock.request('screen');
+        pending = false;
+        if (!HOLD.includes(machine.state)) { s.release(); return; }  // state moved on mid-request
+        sentinel = s;
+        s.addEventListener('release', () => { if (sentinel === s) sentinel = null; });
+      } catch { pending = false; sentinel = null; }
+    }
+    function release() {
+      try { sentinel?.release(); } catch {}
+      sentinel = null;
+    }
+    return {
+      wants(state) { return HOLD.includes(state); },
+      sync(to)     { try { this.wants(to) ? acquire() : release(); } catch {} },
+    };
+  })();
+
+  // ---------- TIMERS ----------
+  // The ONLY way timers/rAF/transient listeners are created (DESIGN.md §2).
+  // transition() clears the registry before entering any state, so nothing survives navigation.
+  const timers = (() => {
+    let handles = [];                        // [kind, handle] kind: 't'|'i'|'r'|'l'
+    return {
+      after(ms, fn)  { const h = setTimeout(fn, ms);  /* raw-timer-ok */ handles.push(['t', h]); return h; },
+      every(ms, fn)  { const h = setInterval(fn, ms); /* raw-timer-ok */ handles.push(['i', h]); return h; },
+      rafLoop(fn)    {                       // self-rescheduling: runs fn(t) each frame until fn returns false
+        const slot = ['r', 0];
+        const loop = (t) => { if (fn(t) !== false) slot[1] = requestAnimationFrame(loop); /* raw-timer-ok */ };
+        slot[1] = requestAnimationFrame(loop); /* raw-timer-ok */
+        handles.push(slot);
+      },
+      listen(target, ev, fn, opts) {         // transient listeners are timer-class resources
+        target.addEventListener(ev, fn, opts);
+        handles.push(['l', () => target.removeEventListener(ev, fn, opts)]);
+      },
+      clearAll() {
+        for (const [k, h] of handles) {
+          if (k === 't') clearTimeout(h);
+          else if (k === 'i') clearInterval(h);
+          else if (k === 'r') cancelAnimationFrame(h);
+          else h();
+        }
+        handles = [];
+      },
+      count() { return handles.length; },    // exposed to tests via __gonuts
+    };
+  })();
+
+  // ---------- GAME MODEL ----------
+  // Pure data + pure functions + the advance() router (DESIGN.md §7). No DOM access.
+  // Scores are NEVER stored — always derived from the append-only `turns` log.
+  let game = null;
+  let roster = [];                         // setup-screen names; newGame() consumes a copy
+
+  // Team mode (Phase 4.3): setup-only state — rosterTeams[i] indexes TEAM_META for roster[i].
+  // Deliberately NOT persisted (the setup snapshot keeps only names); a STARTED game carries
+  // its teams in game.teams / player.teamId, which ride the game snapshot like any field.
+  let teamMode = false;
+  let rosterTeams = [];
+
+  const TEAM_META = Object.freeze([        // exactly two teams — badges cycle through this list
+    Object.freeze({ id: 't1', name: '🔴 Red Team',  badge: '🔴' }),
+    Object.freeze({ id: 't2', name: '🔵 Blue Team', badge: '🔵' }),
+  ]);
+
+  function newGame(playerNames, teamIdx = null) {        // teamIdx (4.3): per-player index into TEAM_META, or null
+    const players = playerNames.map((name, i) => ({ id: 'p' + (i + 1), name }));
+    let teams = null;
+    if (teamIdx) {                                       // team games only: player.teamId + game.teams
+      teams = TEAM_META.map(t => ({ id: t.id, name: t.name, memberIds: [] }));
+      players.forEach((p, i) => {
+        p.teamId = teams[teamIdx[i]].id;
+        teams[teamIdx[i]].memberIds.push(p.id);
+      });
+    }
+    const frozen = Object.freeze({ ...settings });       // frozen snapshot (DESIGN.md §5)
+    return {
+      v: 2,                                              // Phase 3 schema — v1 saves are discarded, never migrated
+      settings: frozen,
+      players,                                           // stable ids for the whole game; never key by name
+      ...(teams && { teams }),                           // team games only — individual snapshots stay byte-identical (4.3)
+      order: shuffle(players.map(p => p.id)),            // Fisher-Yates: fresh order every game (and round, from 3.5)
+      round: 1,
+      turnIdx: 0,                                        // index into order (or tiebreak.order during NUT-OFF)
+      raterQueue: [],                                    // player ids left to rate the current turn
+      turns: [],                                         // append-only log — the ONLY source of scoring truth
+        // entry: { performerId:'p2', round:1, nutoff:false, promptIdx:17, ratings:{ p1:4, p3:5 } }
+      drawPile: shuffle(range(activeDeck(frozen.deckId).prompts.length)),  // pre-shuffled prompt indexes; pop() = draw ⇒ no repeats
+      currentPromptIdx: null,                            // drawn in enterIntro; persisted so a resumed turn keeps its prompt
+      skipsUsed: Object.fromEntries(players.map(p => [p.id, 0])),  // per player id, max CONFIG.SKIPS_PER_PLAYER
+      tiebreak: null,                                    // NUT-OFF machinery lands in 3.3; the field ships with v2
+      hofRecorded: false,
+    };
+  }
+
+  function currentPerformerId() {
+    if (!game) return null;
+    return game.tiebreak ? game.tiebreak.order[game.tiebreak.turnIdx] : game.order[game.turnIdx];
+  }
+
+  function currentPlayer() {
+    const id = currentPerformerId();
+    return game?.players.find(p => p.id === id) || null;
+  }
+
+  function nameOf(id) {                    // id → display name
+    return game?.players.find(p => p.id === id)?.name ?? '?';
+  }
+
+  function teamIdOf(g, id) {               // team mode (4.3): a player's team — undefined in individual games
+    return g.players.find(p => p.id === id)?.teamId;
+  }
+
+  function getRaterIds(g, performerId) {   // NUT-OFF (3.3): non-contenders only; team mode (4.3): non-teammates only
+    let ids = g.players.map(p => p.id);
+    ids = g.tiebreak ? ids.filter(id => !g.tiebreak.contenders.includes(id))   // tied players never rate each other
+                     : ids.filter(id => id !== performerId);
+    if (g.teams) {                         // teammates never rate their own performer (DESIGN.md §8.3);
+      const team = teamIdOf(g, performerId);        // during a NUT-OFF both exclusions apply
+      ids = ids.filter(id => teamIdOf(g, id) !== team);
+    }
+    return ids;
+  }
+
+  function starsFor(turn) {
+    return Object.values(turn.ratings).reduce((a, b) => a + b, 0);
+  }
+
+  function totalsFor(g, { nutoffOnly = false, by = null } = {}) {   // main totals exclude NUT-OFF turns (DESIGN.md §7)
+    const key = by || (id => id);          // { by } (4.3): optional key-function grouping — team games pass id → teamId
+    const totals = new Map(g.players.map(p => [key(p.id), { total: 0, turnCount: 0, avg: 0 }]));
+    const ratingCounts = new Map();                      // ratings received, for the per-rating average
+    for (const t of g.turns) {
+      if (!!t.nutoff !== nutoffOnly) continue;
+      const k = key(t.performerId);
+      const row = totals.get(k);
+      if (!row) continue;
+      row.total += starsFor(t);
+      row.turnCount++;
+      ratingCounts.set(k, (ratingCounts.get(k) || 0) + Object.keys(t.ratings).length);
+    }
+    for (const [k, row] of totals) {
+      const n = ratingCounts.get(k) || 0;
+      row.avg = n ? row.total / n : 0;
+    }
+    return totals;
+  }
+
+  function computeWinners(g, opts) {       // ALWAYS an array — ties are explicit, never sorted[0]
+    const totals = totalsFor(g, opts);
+    const max = Math.max(...[...totals.values()].map(r => r.total));
+    return [...totals.keys()].filter(k => totals.get(k).total === max);   // player ids — or team ids under { by }
+  }
+
+  function computeSuperlatives(g) {        // Phase 3.6 — fun awards mined from the raw log; intra-award ties all listed
+    if (g.players.length < 3) return [];   // with 2 players every award is a foregone conclusion
+    const out = [];
+    const tiedAt = (map, best) => [...map.keys()].filter(id => Math.abs(map.get(id) - best) < 1e-9);
+
+    // 🍌 Most Bananas Moment: the highest single-turn star haul, with the prompt that caused it.
+    let best = 0, bestTurns = [];
+    for (const t of g.turns) {
+      const s = starsFor(t);
+      if (s > best) { best = s; bestTurns = [t]; }
+      else if (s === best && s > 0) bestTurns.push(t);
+    }
+    if (bestTurns.length) {
+      const ids = [...new Set(bestTurns.map(t => t.performerId))];
+      const prompts = [...new Set(bestTurns.map(t => t.promptIdx).filter(i => i != null).map(promptText))];
+      out.push({ title: '🍌 Most Bananas Moment', playerIds: ids,
+                 detail: `${best} ⭐ in one turn${prompts.length ? ` — going nuts like ${prompts.join(' & ')}` : ''}` });
+    }
+
+    // 🌟 Crowd Favorite: the most 5⭐ ratings received.
+    const fives = new Map(g.players.map(p => [p.id, 0]));
+    for (const t of g.turns) for (const s of Object.values(t.ratings)) {
+      if (s === 5 && fives.has(t.performerId)) fives.set(t.performerId, fives.get(t.performerId) + 1);
+    }
+    const maxFives = Math.max(...fives.values());
+    if (maxFives > 0) {
+      out.push({ title: '🌟 Crowd Favorite', playerIds: tiedAt(fives, maxFives),
+                 detail: `${maxFives} × 5⭐ ratings received` });
+    }
+
+    // 💝 Most Generous Rater: the highest average handed out (from the ratings KEYS — the raters).
+    const given = new Map(g.players.map(p => [p.id, { sum: 0, n: 0 }]));
+    for (const t of g.turns) for (const [rid, s] of Object.entries(t.ratings)) {
+      const r = given.get(rid);
+      if (r) { r.sum += s; r.n++; }
+    }
+    const avgs = new Map([...given].filter(([, r]) => r.n).map(([id, r]) => [id, r.sum / r.n]));
+    if (avgs.size) {
+      const maxAvg = Math.max(...avgs.values());
+      out.push({ title: '💝 Most Generous Rater', playerIds: tiedAt(avgs, maxAvg),
+                 detail: `${maxAvg.toFixed(1)} ⭐ average given` });
+    }
+    return out;
+  }
+
+  function getResults(g) {                 // view-model for the winner screen, scoreboards, HOF, share card
+    if (g.teams) {                         // Team mode (4.3): rank the TEAMS; superlatives stay per-player.
+      const byTeam = { by: id => teamIdOf(g, id) };
+      const teamTotals = totalsFor(g, byTeam);
+      const rows = g.teams
+        .map(t => ({ id: t.id, name: t.name,
+                     members: t.memberIds.map(id => g.players.find(p => p.id === id)?.name ?? '?'),
+                     ...teamTotals.get(t.id) }))
+        .sort((a, b) => b.total - a.total);
+      // No tiebreak resolution here on purpose: a team NUT-OFF is unreachable — with two
+      // teams every team tie leaves zero eligible raters, so advance()'s zero-rater guard
+      // already fell to the co-winner crown.
+      const winners = computeWinners(g, byTeam).map(id => rows.find(r => r.id === id));
+      return { winners, rows, superlatives: computeSuperlatives(g), coWinners: winners.length > 1,
+               roster: g.players.map(p => ({ id: p.id, name: p.name })) };  // per-player names for the share card's superlative pills
+    }
+    const totals = totalsFor(g);
+    const rows = g.players
+      .map(p => ({ id: p.id, name: p.name, ...totals.get(p.id) }))
+      .sort((a, b) => b.total - a.total);
+    // NUT-OFF resolution (3.3): the sudden-death turns decide the crown, but the rows keep
+    // the honest championship totals (totalsFor's default already excludes nutoff turns).
+    let winnerIds = computeWinners(g);
+    if (g.tiebreak) {
+      const nutoff = totalsFor(g, { nutoffOnly: true });
+      const max = Math.max(...g.tiebreak.contenders.map(id => nutoff.get(id).total));
+      winnerIds = g.tiebreak.contenders.filter(id => nutoff.get(id).total === max);  // still tied → co-winners
+    }
+    const winners = winnerIds.map(id => rows.find(r => r.id === id));
+    return { winners, rows, superlatives: computeSuperlatives(g), coWinners: winners.length > 1 };
+  }
+
+  function hasPrivateRating() {            // Phase 3.4: every rating rides the pass-the-phone interstitial
+    return true;
+  }
+
+  function openRating() {                  // data op: log the turn entry + build the rater queue
+    const g = game;
+    const performerId = currentPerformerId();
+    g.turns.push({ performerId, round: g.round, nutoff: !!g.tiebreak, promptIdx: g.currentPromptIdx, ratings: {} });
+    g.currentPromptIdx = null;             // prompt consumed by the log — the next intro draws fresh
+    g.raterQueue = getRaterIds(g, performerId);
+  }
+
+  function advance() {                     // the single flow router — called after each recorded rating
+    const g = game;
+    if (g.raterQueue.length) return transition(hasPrivateRating() ? 'pass' : 'rating');
+    if (g.tiebreak) {                      // NUT-OFF (3.3): sudden-death turns step through tiebreak.order
+      g.tiebreak.turnIdx++;
+      if (g.tiebreak.turnIdx < g.tiebreak.order.length) return transition('intro');
+      return transition('winner');         // enterWinner resolves via the nutoffOnly totals
+    }
+    g.turnIdx++;
+    if (g.turnIdx < g.order.length) return transition('intro');
+    if (g.round < g.settings.rounds) return transition('roundEnd');   // Phase 3.5: more rounds to play
+    // Team games (4.3) tie at the TEAM level; a would-be NUT-OFF's contenders are every
+    // member of the tied teams. Individual games keep the per-player winners.
+    let winners;
+    if (g.teams) {
+      const tied = computeWinners(g, { by: id => teamIdOf(g, id) });
+      if (tied.length === 1) return transition('winner');
+      winners = g.players.filter(p => tied.includes(p.teamId)).map(p => p.id);
+    } else {
+      winners = computeWinners(g);
+      if (winners.length === 1) return transition('winner');
+    }
+    // A partial top tie goes to sudden death (3.3) — but only when every contender has at
+    // least one eligible rater. An ALL-player tie leaves none (including every 2-player
+    // tie), and a team tie makes every neutral a contender's teammate (with two teams,
+    // EVERY team tie) — both fall to the co-winner crown instead of an unratable turn.
+    // The probe runs the real rater rule, so the guard and the flow can never drift (4.3).
+    const probe = { ...g, tiebreak: { contenders: winners } };
+    if (winners.some(id => !getRaterIds(probe, id).length)) return transition('winner');
+    return transition('nutoff', { contenders: winners });
+  }
+
+  // ---------- MACHINE ----------
+  const STATES = {
+    // Phase 1 ships these six rows; Phase 3 ADDS pass/roundEnd/nutoff rows and widens `to` lists.
+    setup:      { screen: 'setup',     to: ['intro'],                              enter: enterSetup },
+    intro:      { screen: 'intro',     to: ['countdown', 'setup'],                 enter: enterIntro },
+    countdown:  { screen: 'countdown', to: ['performing', 'setup'],                enter: enterCountdown,  resume: 'intro' },
+    performing: { screen: 'timer',     to: ['pass', 'rating', 'setup'],            enter: enterPerforming, resume: 'intro' },
+    pass:       { screen: 'pass',      to: ['rating', 'setup'],                    enter: enterPass },
+    rating:     { screen: 'rating',    to: ['rating', 'pass', 'intro', 'roundEnd', 'nutoff', 'winner', 'setup'], enter: enterRating, resume: 'pass' },
+    roundEnd:   { screen: 'roundend',  to: ['intro', 'setup'],                     enter: enterRoundEnd },
+    nutoff:     { screen: 'nutoff',    to: ['intro', 'setup'],                     enter: enterNutoff },
+    winner:     { screen: 'winner',    to: ['intro', 'setup'],                     enter: enterWinner },
+  };
+  const machine = { state: null };         // null = boot; transitions from boot are always legal (resume targets)
+
+  function transition(to, payload = {}) {
+    const from = machine.state;
+    if (from && !STATES[from].to.includes(to)) {
+      console.warn(`[fsm] blocked ${from} -> ${to}`);
+      return false;                        // guarded no-op — this is what makes double-fires harmless
+    }
+    timers.clearAll();                     // no timer/listener/rAF survives a transition
+    wakeLock.sync(to);                     // hold the screen awake during live-game states (DESIGN.md §3)
+    machine.state = to;
+    show(STATES[to].screen);               // the ONLY call site of show()
+    STATES[to].enter(payload);
+    syncMascot();                          // content just rendered — re-measure the mascot bow-out
+    syncChrome();                          // fresh screens start unscrolled — restore the corner chrome
+    saveGame();                            // persistence rides every transition (DESIGN.md §4)
+    return true;
+  }
+
+  function show(name) {                    // PRIVATE to transition(): dumb DOM toggler
+    setSheetOpen(false);                   // no overlay outlives a navigation (belt-and-braces:
+                                           // the inert background makes mid-sheet transitions unreachable anyway)
+    setDeckEditorOpen(false);              // …and neither does the deck editor (Phase 4.1) — force-close,
+                                           // never the closeDeckEditor() path (that would reopen the sheet)
+    document.body.dataset.state = machine.state;
+    document.querySelectorAll('.screen').forEach(el =>
+      el.classList.toggle('active', el.id === `${name}-screen`));
+    // A11y (G-UX5): move focus to the incoming screen's primary heading so screen
+    // readers announce the new context. Headings carry tabindex="-1" in the markup;
+    // countdown has no heading (transient 3-2-1) and is deliberately skipped.
+    const heading = document.querySelector(`#${name}-screen [tabindex="-1"]`);
+    heading?.focus({ preventScroll: true });
+  }
+
+  // ---------- SCREENS ----------
+  // Mascot bow-out (G-UX3): the panel screens reserve the peanut's corner via bottom
+  // padding, but whether the content fits is roster/scoreboard-dependent — no fixed
+  // height cutoff works (a 5-player winner scoreboard overflows even tall phones).
+  // Measure WITH the reserve in place (class off), so the predicate is stable and
+  // never oscillates, then stamp body.crowded; the CSS block hides the mascot and
+  // returns the reserve on the panel states. Pure sync layout read — no timers, no
+  // transitions, and pose selection stays 100% body[data-state] CSS.
+  function syncMascot() {
+    document.body.classList.remove('crowded');
+    const scr = document.querySelector('.screen.active');
+    const crowded = !!scr && scr.scrollHeight > scr.clientHeight + 1;
+    document.body.classList.toggle('crowded', crowded);
+  }
+
+  // Corner-chrome bow-out: while the ACTIVE screen is scrolled away from its top, the
+  // fixed Reset/gear/mute would sit over interactive rows (roster × buttons, HOF list),
+  // so body.scrolled fades them out and drops their pointer-events (CSS above). Pure
+  // sync class stamp — no timers; the scroll listener rides BOOT (screens don't bubble
+  // scroll, so it listens in the capture phase), and transition() re-stamps so a fresh
+  // screen always gets its chrome back.
+  function syncChrome() {
+    const scr = document.querySelector('.screen.active');
+    document.body.classList.toggle('scrolled', !!scr && scr.scrollTop > 0);
+  }
+
+  // -- setup --
   const nameInput = $('name-input');
   const addBtn = $('add-btn');
   const playerList = $('player-list');
   const startBtn = $('start-btn');
 
   function renderPlayers() {
+    if (teamMode && roster.length < CONFIG.TEAM_MIN_PLAYERS) teamMode = false;  // shrinking below 4 turns teams off
+    renderTeamToggle();
     playerList.innerHTML = '';
-    state.players.forEach((p, i) => {
+    roster.forEach((name, i) => {
       const li = document.createElement('li');
-      li.innerHTML = `<span>${escapeHtml(p.name)}</span>`;
+      li.innerHTML = `<span>${escapeHtml(name)}</span>`;
+      if (teamMode) {                      // Phase 4.3: the tap-to-cycle team badge leads the row
+        li.className = 'teamed';
+        const badge = document.createElement('button');
+        badge.className = 'team-badge';
+        badge.textContent = TEAM_META[rosterTeams[i]].badge;
+        badge.setAttribute('aria-label', `${name}: ${TEAM_META[rosterTeams[i]].name} — tap to switch team`);
+        badge.onclick = () => {            // setup-only data op — a key-repeat after START must not remix teams
+          if (machine.state !== 'setup') return;
+          rosterTeams[i] = (rosterTeams[i] + 1) % TEAM_META.length;
+          $('name-error').textContent = '';
+          renderPlayers();
+        };
+        li.prepend(badge);
+      }
       const x = document.createElement('button');
       x.className = 'x-btn';
       x.textContent = '×';
-      x.onclick = () => { state.players.splice(i, 1); renderPlayers(); };
+      x.onclick = () => { roster.splice(i, 1); rosterTeams.splice(i, 1); renderPlayers(); saveGame(); };
       li.appendChild(x);
       playerList.appendChild(li);
     });
-    startBtn.disabled = state.players.length < 2;
+    startBtn.disabled = roster.length < CONFIG.MIN_PLAYERS;
+    syncMascot();                          // the roster just grew/shrank the setup panel
   }
 
-  function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, c => ({
-      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-    }[c]));
+  function renderTeamToggle() {            // Phase 4.3: the toggle appears only from TEAM_MIN_PLAYERS up
+    const btn = $('team-toggle');
+    btn.hidden = roster.length < CONFIG.TEAM_MIN_PLAYERS;
+    btn.textContent = teamMode ? '🔴🔵 Teams: On' : '🔴🔵 Teams: Off';   // short: single-line at 320px
+    btn.setAttribute('aria-pressed', String(teamMode));
+  }
+
+  function nameFeedback(msg, el = nameInput) {   // message under the input + 300ms shake; cleared on next input
+    $('name-error').textContent = msg;
+    el.classList.add('shake');
+    restartAnim(el);
   }
 
   function addPlayer() {
     const name = nameInput.value.trim();
-    if (!name) return;
-    if (state.players.some(p => p.name.toLowerCase() === name.toLowerCase())) {
-      nameInput.value = '';
-      return;
+    if (!name) return nameFeedback('Type a name first!');
+    const dupe = roster.find(n => n.toLowerCase() === name.toLowerCase());
+    if (dupe) return nameFeedback(`${dupe} is already playing!`);
+    roster.push(name);
+    if (teamMode) {                        // joiners auto-balance onto the smaller team (red on ties)
+      const red = rosterTeams.filter(t => t === 0).length;
+      rosterTeams.push(red <= rosterTeams.length - red ? 0 : 1);
     }
-    state.players.push({ name, scores: [], total: 0 });
     nameInput.value = '';
     renderPlayers();
+    saveGame();
     nameInput.focus();
   }
 
-  addBtn.onclick = addPlayer;
-  nameInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') addPlayer();
-  });
-
-  startBtn.onclick = () => {
-    state.turnIndex = 0;
-    state.players.forEach(p => { p.scores = []; p.total = 0; });
-    showIntro();
-  };
-
-  // ---------- INTRO ----------
-  function showIntro() {
-    if (state.turnIndex >= state.players.length) {
-      showWinner();
-      return;
-    }
-    $('intro-name').textContent = state.players[state.turnIndex].name;
-    show('intro');
+  function enterSetup() {
+    renderResumeBanner();
+    renderPlayers();
+    if (!$('hof-panel').hidden) renderHofList();   // an open list refreshes (e.g. back from a finished game)
   }
 
-  $('begin-turn-btn').onclick = () => {
-    runReadyCountdown(() => startTimer());
-  };
+  function renderHofList() {               // Hall of Fame list (3.7) — re-rendered from storage on demand
+    const entries = loadHof().entries;
+    $('hof-empty').hidden = entries.length > 0;
+    const ol = $('hof-list');
+    ol.innerHTML = '';
+    for (const e of entries) {
+      const li = document.createElement('li');
+      li.textContent = `${e.winners.join(' & ')} — ${e.stars}\u00a0⭐`;   // nbsp: never orphan-wrap a lone ⭐
+      const sub = document.createElement('span');
+      sub.className = 'small';
+      sub.textContent = `${e.players.length} players · ${e.rounds} round${e.rounds === 1 ? '' : 's'}`
+        + (e.hadNutoff ? ' · 🥜 nut-off' : '')
+        + ` · ${new Date(e.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+      li.appendChild(sub);
+      ol.appendChild(li);
+    }
+  }
 
-  function runReadyCountdown(onDone) {
-    const overlay = $('ready-overlay');
-    const num = $('ready-num');
-    const seq = ['3', '2', '1', 'GO NUTS!'];
+  // -- intro --
+  function enterIntro() {
+    const p = currentPlayer();
+    if (!p) return transition('setup');
+    $('intro-name').textContent = p.name;
+    $('intro-secs').textContent = turnSecondsForCurrentTurn();
+    const tiebreak = !!game.tiebreak;              // NUT-OFF banner replaces the round tag during sudden death (3.3)
+    $('intro-nutoff').hidden = !tiebreak;
+    const multi = !tiebreak && game.settings.rounds > 1;   // single-round games skip the tag (Phase 3.5)
+    $('intro-round').hidden = !multi;
+    if (multi) $('intro-round').textContent = `Round ${game.round} of ${game.settings.rounds}`;
+    if (game.currentPromptIdx == null) drawPrompt();   // a resumed turn keeps its persisted prompt
+    renderIntroPrompt();
+  }
+
+  function drawPrompt() {                  // data op: pop the pre-shuffled pile (DESIGN.md §7)
+    if (!game.drawPile.length) {           // drained mid-game: reshuffle the full range — repeats now unavoidable
+      game.drawPile = shuffle(range(activeDeck().prompts.length));
+    }
+    game.currentPromptIdx = game.drawPile.pop();
+  }
+
+  function promptText(idx) {
+    const d = activeDeck();
+    return d.prompts[idx] ?? d.prompts[0]; // a stale index (deck swapped under a resume) falls back safely
+  }
+
+  function renderIntroPrompt() {           // in-place re-render — skip never navigates (DESIGN.md §7)
+    $('intro-prompt-text').textContent = promptText(game.currentPromptIdx);
+    const p = currentPlayer();
+    $('skip-prompt-btn').hidden = !p || game.skipsUsed[p.id] >= CONFIG.SKIPS_PER_PLAYER;
+  }
+
+  // -- countdown --
+  function enterCountdown() {
+    if (!currentPlayer()) return transition('setup');
     let i = 0;
-    overlay.classList.add('active');
     const step = () => {
-      if (i >= seq.length) {
-        overlay.classList.remove('active');
-        onDone();
-        return;
-      }
-      num.textContent = seq[i];
-      num.style.animation = 'none';
-      void num.offsetWidth;
-      num.style.animation = '';
+      if (i >= CONFIG.COUNTDOWN_STEPS.length) return transition('performing');
+      const num = $('ready-num');
+      num.textContent = CONFIG.COUNTDOWN_STEPS[i];
+      restartAnim(num);
+      audio.play(i < 3 ? 'tick' : 'go'); haptics.buzz(i < 3 ? 30 : [60, 40, 60]);
       i++;
-      setTimeout(step, 700);
+      timers.after(countdownStepMs(), step);
     };
     step();
   }
 
-  // ---------- TIMER ----------
-  const RING_CIRC = 2 * Math.PI * 90; // ~565.48
-  $('ring-fg').setAttribute('stroke-dasharray', RING_CIRC);
+  // -- performing (timer) --
+  // Truth is Date.now() vs run.turnEndsAt; the REPAINT_MS interval only repaints (DESIGN.md §3).
+  // Date.now() (not performance.now()) on purpose: iOS Safari freezes performance.now() while
+  // the page is suspended (screen lock), which would grant a de-facto pause — §3 rules that out.
+  // The deadline is still never persisted, so a reload stays harmless (§3 resume rule).
+  // Ephemeral runtime values live here — never in closures captured by listeners, never persisted.
+  const run = { turnEndsAt: 0, turnTotalMs: 0, lastWholeSecond: 0 };
 
-  function startTimer() {
-    show('timer');
-    $('timer-name').textContent = state.players[state.turnIndex].name;
-    state.timeLeft = 15;
-    updateRing();
-    cycleWord();
-    state.timer = setInterval(tick, 1000);
-    state.wordTimer = setInterval(cycleWord, 900);
+  function enterPerforming() {
+    const p = currentPlayer();
+    if (!p) return transition('setup');
+    $('timer-name').textContent = p.name;
+    renderPromptLine();                                     // no-op until Phase 3
+    run.turnTotalMs = turnSecondsForCurrentTurn() * 1000;
+    run.turnEndsAt  = Date.now() + run.turnTotalMs;
+    run.lastWholeSecond = turnSecondsForCurrentTurn() + 1;
+    $('ring-live').textContent = '';       // fresh turn: clear the stale last announcement
+    repaintRing(); cycleWord();
+    timers.every(CONFIG.REPAINT_MS, repaintRing);
+    timers.every(wordCycleMs(), cycleWord);
   }
 
-  function tick() {
-    state.timeLeft--;
-    updateRing();
-    if (state.timeLeft <= 0) {
-      stopTimer();
-      goToRating();
-    }
+  function renderPromptLine() {            // the prompt stays visible while performing (DESIGN.md §7)
+    $('timer-prompt').textContent =
+      game?.currentPromptIdx != null ? `…like ${promptText(game.currentPromptIdx)}!` : '';
   }
 
-  function updateRing() {
-    $('ring-num').textContent = Math.max(0, state.timeLeft);
-    const pct = state.timeLeft / 15;
-    const offset = RING_CIRC * (1 - pct);
+  function repaintRing() {                 // replaces tick() + updateRing()
+    const msLeft = Math.max(0, run.turnEndsAt - Date.now());
+    const secs = Math.ceil(msLeft / 1000);
+    $('ring-num').textContent = secs;
     const ring = $('ring-fg');
-    ring.setAttribute('stroke-dashoffset', offset);
-    if (state.timeLeft <= 3) ring.style.stroke = '#ff5252';
-    else if (state.timeLeft <= 8) ring.style.stroke = '#fb8c00';
-    else ring.style.stroke = '#ffeb3b';
+    ring.setAttribute('stroke-dashoffset', CONFIG.RING_CIRC * (1 - msLeft / run.turnTotalMs));
+    ring.style.stroke = secs <= CONFIG.URGENT_AT_S ? '#ff5252' : secs <= CONFIG.WARN_AT_S ? '#fb8c00' : '#ffeb3b';
+    if (secs !== run.lastWholeSecond) {    // per-second edge — sound/haptic/announce hook
+      run.lastWholeSecond = secs;
+      // Announce only the final seconds (G-UX5): a per-second live region for a whole
+      // 15s turn would be pure screen-reader chatter.
+      if (secs > 0 && secs <= CONFIG.ANNOUNCE_AT_S) $('ring-live').textContent = String(secs);
+      if (secs > 0 && secs <= CONFIG.URGENT_AT_S) { audio.play('urgent'); haptics.buzz(40); }
+    }
+    if (msLeft <= 0) endTurn();
+  }
+
+  function endTurn() {                     // also the Stop button handler body
+    if (machine.state !== 'performing') return;   // a turn can only end once (key-repeat safe)
+    audio.play('buzzer'); haptics.buzz([80, 60, 80]);   // one call site covers time-up AND Stop
+    openRating();                          // logs the turn entry + builds raterQueue (DESIGN.md §7)
+    transition(hasPrivateRating() ? 'pass' : 'rating');
   }
 
   function cycleWord() {
     const w = CRAZY_WORDS[Math.floor(Math.random() * CRAZY_WORDS.length)];
     const el = $('crazy-word');
     el.textContent = w;
-    el.style.animation = 'none';
-    void el.offsetWidth;
-    el.style.animation = 'spinword 0.6s ease';
+    restartAnim(el);
   }
 
-  function stopTimer() {
-    clearInterval(state.timer);
-    clearInterval(state.wordTimer);
-    state.timer = state.wordTimer = null;
+  // -- pass (private rating, Phase 3.4) --
+  // The interstitial IS the privacy mechanism (DESIGN.md §7): only the named rater
+  // should advance past this screen, so the previous rater's stars are never on show
+  // while the phone changes hands. The star UI itself is unchanged. A mid-rating
+  // reload rewinds here (rating.resume = 'pass'), so the current rater re-rates.
+  function enterPass() {
+    const g = game;
+    if (!g || !currentPlayer() || !g.raterQueue.length) return transition('setup');
+    const rater = nameOf(g.raterQueue[0]);
+    $('pass-name').textContent = rater;
+    $('pass-rate-btn').textContent = `I'm ${rater} — rate!`;
   }
 
-  $('stop-btn').onclick = () => {
-    stopTimer();
-    goToRating();
-  };
+  // -- rating --
+  let currentRating = 0;                   // UI-only star selection — never persisted (DESIGN.md §4)
 
-  // ---------- RATING ----------
-  function goToRating() {
-    const current = state.players[state.turnIndex];
-    state.raterQueue = state.players
-      .map(p => p.name)
-      .filter(n => n !== current.name);
-    nextRater();
-  }
-
-  function nextRater() {
-    if (state.raterQueue.length === 0) {
-      // done rating this player
-      state.turnIndex++;
-      showIntro();
-      return;
-    }
-    const current = state.players[state.turnIndex];
-    const rater = state.raterQueue[0];
-    $('rate-name').textContent = current.name;
-    const total = state.players.length - 1;
-    const idx = total - state.raterQueue.length + 1;
-    $('rater-label').textContent = `${rater}, you rate (${idx} of ${total})`;
-    state.currentRating = 0;
+  function enterRating() {
+    const g = game;
+    const performer = currentPlayer();
+    if (!g || !performer || !g.raterQueue.length) return transition('setup');
+    const raterId = g.raterQueue[0];
+    clearConfetti();                       // the previous rater's frozen micro-burst never carries over
+    $('rate-name').textContent = performer.name;
+    const total = getRaterIds(g, performer.id).length;
+    const idx = total - g.raterQueue.length + 1;
+    $('rater-label').textContent = `${nameOf(raterId)}, you rate (${idx} of ${total})`;
+    currentRating = 0;
     renderStars();
     $('rating-word').textContent = 'Tap a star!';
     $('submit-rating-btn').disabled = true;
-    show('rating');
   }
 
   function renderStars() {
@@ -579,10 +1884,17 @@
     wrap.innerHTML = '';
     for (let i = 1; i <= 5; i++) {
       const b = document.createElement('button');
-      b.className = 'star' + (i <= state.currentRating ? ' active' : '');
+      b.className = 'star' + (i <= currentRating ? ' active' : '');
       b.textContent = '⭐';
+      b.setAttribute('aria-label', i === 1 ? '1 star' : `${i} stars`);   // G-UX5
+      b.setAttribute('aria-pressed', i <= currentRating ? 'true' : 'false');
       b.onclick = () => {
-        state.currentRating = i;
+        currentRating = i;
+        audio.play('pop', i);              // pitch rises with the star count (DESIGN.md §6)
+        if (i === 5) {                     // top marks → micro-burst from the tapped star (G-UX8)
+          const r = b.getBoundingClientRect();   // measured before renderStars() replaces the node
+          burstConfetti(30, { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+        }
         renderStars();
         $('rating-word').textContent = RATING_WORDS[i - 1];
         $('submit-rating-btn').disabled = false;
@@ -591,60 +1903,563 @@
     }
   }
 
-  $('submit-rating-btn').onclick = () => {
-    if (!state.currentRating) return;
-    const current = state.players[state.turnIndex];
-    current.scores.push(state.currentRating);
-    state.raterQueue.shift();
-    nextRater();
-  };
-
-  // ---------- WINNER ----------
-  function showWinner() {
-    state.players.forEach(p => {
-      p.total = p.scores.reduce((a, b) => a + b, 0);
-    });
-    const sorted = [...state.players].sort((a, b) => b.total - a.total);
-    const winner = sorted[0];
-    $('winner-name').textContent = winner.name;
-    const avg = winner.scores.length ? (winner.total / winner.scores.length).toFixed(1) : '0';
-    $('winner-score').textContent = `${winner.total} ⭐ (avg ${avg})`;
-    const ol = $('final-scores');
-    ol.innerHTML = '';
-    sorted.forEach(p => {
-      const li = document.createElement('li');
-      const a = p.scores.length ? (p.total / p.scores.length).toFixed(1) : '0';
-      li.textContent = `${p.name} — ${p.total} ⭐ (avg ${a})`;
-      ol.appendChild(li);
-    });
-    show('winner');
-    burstConfetti();
+  // -- roundEnd (multi-round, Phase 3.5) --
+  // Renders purely from getResults(game).rows — totals accumulate automatically because
+  // every turn entry carries its round. Resumable as itself (owns no timers, no resume key).
+  function scoreLi(r) {                    // one scoreboard row; team rows (4.3) list their members underneath
+    const li = document.createElement('li');
+    li.textContent = `${r.name} — ${r.total}\u00a0⭐ (avg ${r.avg.toFixed(1)})`;   // nbsp: never orphan-wrap a lone ⭐
+    if (r.members) {
+      const sub = document.createElement('span');
+      sub.className = 'small';
+      sub.textContent = r.members.join(', ');
+      li.appendChild(sub);
+    }
+    return li;
   }
 
-  $('play-again-btn').onclick = () => {
-    state.turnIndex = 0;
-    state.players.forEach(p => { p.scores = []; p.total = 0; });
-    showIntro();
+  function enterRoundEnd() {
+    const g = game;
+    if (!g) return transition('setup');
+    $('roundend-title').textContent = `Round ${g.round} done!`;
+    const ol = $('round-scores');
+    ol.innerHTML = '';
+    getResults(g).rows.forEach(r => ol.appendChild(scoreLi(r)));
+    $('next-round-btn').textContent = `Round ${g.round + 1}!`;
+  }
+
+  // -- nutoff (tie-breaker, Phase 3.3) --
+  // The announcement screen for a partial top tie. Entering it ARMS the tiebreak: from
+  // here on currentPerformerId() walks tiebreak.order, turnSecondsForCurrentTurn()
+  // shortens, getRaterIds() summons non-contenders only, and turns log nutoff:true.
+  // Resumable as itself: a resumed entry has an empty payload and reuses the persisted
+  // game.tiebreak (written by the saveGame() riding the first entry) untouched.
+  function enterNutoff({ contenders } = {}) {
+    const g = game;
+    if (!g || (!g.tiebreak && !contenders?.length)) return transition('setup');
+    if (!g.tiebreak) g.tiebreak = { contenders, order: shuffle(contenders), turnIdx: 0 };
+    $('nutoff-names').textContent = g.tiebreak.contenders.map(nameOf).join(' vs ');
+    audio.play('nutoff'); haptics.buzz([60, 40, 60, 40, 60]);
+  }
+
+  // -- winner --
+  function ordinal(n) {                    // 1st / 2nd / 3rd / 4th … (11th-13th stay "th")
+    const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+
+  function renderSuperlatives(sups) {      // pill rows under the final scoreboard (Phase 3.6)
+    const wrap = $('superlatives');
+    wrap.innerHTML = '';
+    wrap.hidden = !sups.length;            // absent entirely below 3 players
+    for (const s of sups) {
+      const row = document.createElement('div');
+      row.className = 'sup-row';
+      const title = document.createElement('span');
+      title.className = 'sup-title';
+      title.textContent = `${s.title}: `;
+      const names = document.createElement('b');
+      names.textContent = s.playerIds.map(nameOf).join(' & ');   // intra-award ties all listed
+      const detail = document.createElement('div');
+      detail.className = 'sup-detail';
+      detail.textContent = s.detail;
+      row.append(title, names, detail);
+      wrap.appendChild(row);
+    }
+  }
+
+  // Hall of Fame (Phase 3.7): gonuts.hof rides its OWN key — a rating tap never rewrites
+  // it and Reset never clears it (DESIGN.md §4 table). Appended exactly once per finished
+  // game: hofRecorded rides the game snapshot, so a winner-screen refresh + Resume can't
+  // double-write. Returns the crew's title count for the callout line.
+  function loadHof() {
+    const hof = store.get(KEYS.hof);
+    return (hof?.v === 1 && Array.isArray(hof.entries)) ? hof : { v: 1, entries: [] };
+  }
+
+  function crewKeyOf(g) {                  // sorted lowercase names — identifies a crew across games
+    return g.players.map(p => p.name.toLowerCase()).sort().join('|');
+  }
+
+  function updateHof(res) {
+    const g = game;
+    const crewKey = crewKeyOf(g);
+    const hof = loadHof();
+    if (!g.hofRecorded) {
+      hof.entries.unshift({                // newest first, capped (DESIGN.md §7)
+        at: Date.now(), crewKey,
+        players: g.players.map(p => p.name),
+        winners: res.winners.map(w => w.members ? `${w.name} (${w.members.join(', ')})` : w.name),  // team games (4.3): name + members
+        stars: res.winners[0].total,
+        rounds: g.settings.rounds,
+        hadNutoff: !!g.tiebreak,
+      });
+      hof.entries = hof.entries.slice(0, CONFIG.HOF_MAX_ENTRIES);
+      store.set(KEYS.hof, hof);
+      g.hofRecorded = true;                // persisted by the saveGame() riding this transition
+    }
+    return hof.entries.filter(e => e.crewKey === crewKey).length;
+  }
+
+  function enterWinner() {
+    if (!game) return transition('setup');
+    const res = getResults(game);          // renders EXCLUSIVELY from getResults() (DESIGN.md §8)
+    // Ties are celebrated, never resolved by sorted[0]: a partial tie was already routed
+    // to the NUT-OFF by advance(); the co-winner form covers a still-tied NUT-OFF and the
+    // all-player tie (no neutral raters — including every 2-player tie).
+    $('winner-subtitle').textContent = res.coWinners ? 'CO-CRAZIEST OF THEM ALL' : 'CRAZIEST OF THEM ALL';
+    $('winner-name').textContent = res.winners.map(w => w.name).join(' & ');
+    // Team games (4.3): the crown names the TEAM — its members line up underneath.
+    const members = res.winners[0].members ? res.winners.map(t => t.members.join(', ')).join(' & ') : '';
+    $('winner-members').hidden = !members;
+    $('winner-members').textContent = members || '—';
+    const w = res.winners[0];
+    $('winner-score').textContent = `${w.total} ⭐ (avg ${w.avg.toFixed(1)})`;
+    const ol = $('final-scores');
+    ol.innerHTML = '';
+    res.rows.forEach(r => ol.appendChild(scoreLi(r)));
+    renderSuperlatives(res.superlatives);
+    const titles = updateHof(res);         // append once (hofRecorded guard) + crew title count
+    $('crew-line').hidden = titles < 2;    // a first title is no streak — the callout starts at 2
+    if (titles >= 2) $('crew-line').textContent = `👑 ${ordinal(titles)} title for this crew!`;
+    burstConfetti();
+    audio.play('fanfare');
+  }
+
+  // ---------- WIRING ----------
+  // Every handler = optional data mutation + one transition() call (DESIGN.md §2).
+  addBtn.onclick = addPlayer;
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addPlayer();
+  });
+  nameInput.addEventListener('input', () => {      // typing clears the duplicate/empty feedback
+    $('name-error').textContent = '';
+    nameInput.classList.remove('shake');
+  });
+
+  startBtn.onclick = () => {
+    // State guard: a double fire's `game = newGame(...)` would land AFTER enterIntro
+    // drew the first prompt — the live game would start promptless while the intro
+    // shows the discarded game's performer (the blocked transition can't stop the mutation).
+    if (machine.state !== 'setup' || roster.length < CONFIG.MIN_PLAYERS) return;
+    if (teamMode) {                        // Phase 4.3: both teams need at least one member
+      const empty = TEAM_META.findIndex((_, ti) => !rosterTeams.includes(ti));
+      if (empty !== -1) return nameFeedback(`${TEAM_META[empty].name} needs at least one player!`, startBtn);
+    }
+    pendingResume = null;                  // starting fresh abandons any undecided snapshot
+    game = newGame(roster.slice(), teamMode ? rosterTeams.slice() : null);
+    transition('intro');
   };
-  $('new-game-btn').onclick = () => {
-    state.players = [];
+
+  // Team mode toggle (Phase 4.3): setup-only data op + re-render — never a transition.
+  // The machine.state guard follows the startBtn pattern (a key-repeat double fire after
+  // START must not flip the mode under the game the blocked transition left behind).
+  $('team-toggle').onclick = () => {
+    if (machine.state !== 'setup' || roster.length < CONFIG.TEAM_MIN_PLAYERS) return;
+    teamMode = !teamMode;
+    if (teamMode) rosterTeams = roster.map((_, i) => i % TEAM_META.length);   // auto-balanced: alternate 🔴🔵 down the list
+    $('name-error').textContent = '';
     renderPlayers();
-    show('setup');
+  };
+
+  $('begin-turn-btn').onclick = () => transition('countdown');
+
+  // Prompt skip (3.1): pure data op + in-place re-render — deliberately NOT a transition
+  // (the intro screen stays put), so it saves explicitly like the other roster/rating ops.
+  $('skip-prompt-btn').onclick = () => {
+    const p = currentPlayer();
+    if (!game || !p || game.skipsUsed[p.id] >= CONFIG.SKIPS_PER_PLAYER) return;
+    game.skipsUsed[p.id]++;
+    drawPrompt();
+    audio.play('skip');
+    renderIntroPrompt();
+    saveGame();                            // prompt skips persist (DESIGN.md §4 table)
+  };
+
+  $('stop-btn').onclick = endTurn;
+
+  // Pass hand-off (3.4): pure navigation — enterRating reads raterQueue[0] itself.
+  $('pass-rate-btn').onclick = () => transition('rating');
+
+  $('submit-rating-btn').onclick = () => {
+    // The state guard makes a same-task double fire harmless: advance()'s transition
+    // would already be blocked, but the queue shift + rating write before it wouldn't —
+    // the second fire would steal the NEXT rater's rating (same hazard as #next-round-btn).
+    if (machine.state !== 'rating' || !currentRating || !game?.raterQueue.length) return;
+    const raterId = game.raterQueue.shift();
+    game.turns.at(-1).ratings[raterId] = currentRating;
+    saveGame();                            // each recorded rating persists (DESIGN.md §4)
+    advance();
+  };
+
+  // Next round (3.5): data op + one transition. The state guard makes a key-repeat
+  // double fire harmless — the second activation must not bump round again (the
+  // transition itself would already be blocked from 'intro', but the mutation wouldn't).
+  $('next-round-btn').onclick = () => {
+    if (machine.state !== 'roundEnd' || !game) return;
+    game.round++;
+    game.turnIdx = 0;
+    game.order = shuffle(game.players.map(p => p.id));   // every round gets a fresh order (DESIGN.md §7)
+    transition('intro');
+  };
+
+  // NUT-OFF kickoff (3.3): pure navigation — enterNutoff already armed game.tiebreak.
+  $('nutoff-btn').onclick = () => transition('intro');
+
+  // Hall of Fame toggle (3.7): pure DOM toggle on the setup screen — owns no timers,
+  // never navigates; the list re-renders from storage on every open.
+  $('hof-btn').onclick = () => {
+    const panel = $('hof-panel');
+    panel.hidden = !panel.hidden;
+    $('hof-btn').setAttribute('aria-expanded', String(!panel.hidden));
+    if (!panel.hidden) renderHofList();
+    syncMascot();                          // the list changes the setup screen's height
+  };
+
+  $('play-again-btn').onclick = () => {    // fresh game, same crew (order reshuffles from Phase 3)
+    if (machine.state !== 'winner' || !game) return;   // same double-fire hazard as startBtn: never replace a game enterIntro already drew into
+    game = newGame(game.players.map(p => p.name),      // …and the same teams (Phase 4.3)
+                   game.teams ? game.players.map(p => TEAM_META.findIndex(t => t.id === p.teamId)) : null);
+    transition('intro');
+  };
+
+  $('new-game-btn').onclick = () => {
+    game = null;
+    roster = [];
+    transition('setup');
+  };
+
+  // Share card (Phase 4.2): a pure UI action — it mutates no game flow, so it carries
+  // no transition and no machine edge; the in-flight flag is the idempotency guard (a
+  // rapid double-tap must never stack two share dialogs). Web Share with {files} where
+  // the platform offers it — a user cancel rejects (AbortError) and is NOT an error —
+  // else a blob-URL <a download> click. The previous blob URL is revoked on the next
+  // share, so at most one lives at a time (no timers involved).
+  let shareBusy = false;
+  let shareBlobUrl = null;
+  $('share-btn').onclick = async () => {
+    if (shareBusy || machine.state !== 'winner' || !game) return;
+    shareBusy = true;
+    try {
+      const card = renderShareCard(getResults(game));
+      const blob = await new Promise(res => card.toBlob(res, 'image/png'));
+      if (!blob) return;
+      const file = new File([blob], 'go-nuts-results.png', { type: 'image/png' });
+      if (navigator.canShare?.({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: 'Go Nuts!' }); } catch {}
+      } else {
+        if (shareBlobUrl) URL.revokeObjectURL(shareBlobUrl);
+        shareBlobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = shareBlobUrl;
+        a.download = 'go-nuts-results.png';
+        a.click();                         // detached anchor: no DOM footprint, nothing to clean up
+      }
+    } catch {}                             // a canvas/File hiccup must never break the winner screen
+    finally { shareBusy = false; }
   };
 
   $('reset-btn').onclick = () => {
     if (confirm('Reset everything and start over?')) {
-      stopTimer();
-      state.players = [];
-      renderPlayers();
-      show('setup');
+      game = null;
+      roster = [];
+      pendingResume = null;
+      store.del(KEYS.game);
+      renderPlayers();                     // setup→setup is not an edge, so re-render here too
+      renderResumeBanner();
+      transition('setup');
     }
   };
 
+  // Sound + settings chrome (DESIGN.md §5): pure DOM toggles persisted via setSetting().
+  // The sheet is an overlay, NOT a state — it owns no timers and never navigates; the
+  // gear button is CSS-gated to body[data-state="setup"/"winner"] only.
+  function renderSoundControls() {
+    $('sound-btn').textContent = settings.sound ? '🔊' : '🔇';
+    $('sound-btn').setAttribute('aria-label', settings.sound ? 'Mute sound' : 'Unmute sound');
+    $('sheet-sound').textContent = settings.sound ? '🔊 Sound: On' : '🔇 Sound: Off';
+    $('sheet-sound').setAttribute('aria-pressed', String(settings.sound));
+    $('sheet-haptics').textContent = settings.haptics ? '📳 Haptics: On' : '📴 Haptics: Off';
+    $('sheet-haptics').setAttribute('aria-pressed', String(settings.haptics));
+  }
+
+  $('sound-btn').onclick = () => { setSetting('sound', !settings.sound); renderSoundControls(); };
+
+  // Segmented pickers (Phase 3.5): built ONCE at boot from CONFIG/the deck registry;
+  // renderSheetPickers() only syncs aria-pressed, so focus stays on the tapped button.
+  // Every pick is a plain setSetting() — game.settings is a frozen snapshot, so an
+  // in-flight game can never see the change (DESIGN.md §5).
+  function buildSegPicker(id, choices, fmt, key) {
+    const wrap = $(id);
+    for (const c of choices) {
+      const b = document.createElement('button');
+      b.textContent = fmt(c);
+      b.dataset.val = String(c);
+      b.onclick = () => { setSetting(key, c); renderSheetPickers(); };
+      wrap.appendChild(b);
+    }
+  }
+  function renderSheetPickers() {
+    const sync = (id, cur) => {
+      for (const b of $(id).children) {
+        if (b.dataset.val === undefined) continue;   // ➕ New deck is an action, not a pick — no aria-pressed
+        b.setAttribute('aria-pressed', String(b.dataset.val === String(cur)));
+      }
+    };
+    sync('seg-turn', settings.turnSeconds);
+    sync('seg-rounds', settings.rounds);
+    sync('seg-deck', settings.deckId);
+  }
+  buildSegPicker('seg-turn', CONFIG.TURN_CHOICES, s => `${s}s`, 'turnSeconds');
+  buildSegPicker('seg-rounds', CONFIG.ROUND_CHOICES, String, 'rounds');
+
+  // Deck picker + custom-deck management (Phase 4.1). Unlike the boot-built turn/rounds
+  // pickers this one is REBUILT on every render — saves and deletes change the registry
+  // itself, not just which entry is pressed (a pick still only re-syncs aria-pressed via
+  // renderSheetPickers(), so focus never jumps off the tapped button). Deck names are
+  // hostile user input: they render via textContent/attributes only, never innerHTML.
+  function renderDeckPicker() {
+    const custom = loadDecks().decks;
+    const wrap = $('seg-deck');
+    wrap.innerHTML = '';
+    const entries = [...Object.entries(DECKS),
+                     ...Object.entries(custom).filter(([id]) => !Object.hasOwn(DECKS, id))];
+    for (const [id, deck] of entries) {
+      const b = document.createElement('button');
+      b.textContent = deck.name;
+      b.dataset.val = id;
+      b.onclick = () => { setSetting('deckId', id); renderSheetPickers(); };
+      wrap.appendChild(b);
+    }
+    const add = document.createElement('button');   // ➕ New deck rides the same wrapping seg row: with no
+    add.id = 'deck-new-btn';                        // custom decks it shares Classic's line — zero extra height,
+    add.textContent = '➕ New deck';                // so the sheet's backdrop stays reachable on short viewports
+    add.onclick = () => openDeckEditor();
+    wrap.appendChild(add);
+    const list = $('deck-manage-list');    // one Edit/Delete row per CUSTOM deck (built-ins have neither)
+    list.innerHTML = '';
+    for (const [id, deck] of Object.entries(custom)) {
+      const row = document.createElement('div');
+      row.className = 'deck-row';
+      const name = document.createElement('span');
+      name.className = 'deck-row-name';
+      name.textContent = deck.name;
+      const edit = document.createElement('button');
+      edit.className = 'deck-edit';
+      edit.textContent = '✏️ Edit';
+      edit.setAttribute('aria-label', `Edit deck ${deck.name}`);
+      edit.onclick = () => openDeckEditor(id);
+      const del = document.createElement('button');
+      del.className = 'deck-del';
+      del.textContent = '🗑️';
+      del.setAttribute('aria-label', `Delete deck ${deck.name}`);
+      del.onclick = () => {                // data op + re-render — the sheet never navigates
+        if (!confirm(`Delete deck "${deck.name}"?`)) return;
+        const d = loadDecks();
+        delete d.decks[id];
+        if (Object.keys(d.decks).length) store.set(KEYS.decks, d);
+        else store.del(KEYS.decks);        // the last per-deck delete clears the key (DESIGN.md §4 table)
+        if (settings.deckId === id) setSetting('deckId', 'classic');  // deleting the picked deck falls back
+        renderDeckPicker();
+        renderSheetPickers();
+        $('deck-new-btn').focus();         // the tapped row is gone — keep focus inside the sheet
+      };
+      row.append(name, edit, del);
+      list.appendChild(row);
+    }
+  }
+  renderDeckPicker();
+  renderSheetPickers();
+
+  // Sheet open/close (G-UX5): a real modal. While it is up, everything behind it goes
+  // inert (unfocusable + unclickable), so a keyboard-only user can never Tab to
+  // #start-btn and launch the game underneath the sheet; Escape, Done, and the backdrop
+  // all dismiss it, and show() force-closes it so no overlay ever outlives a transition.
+  // Still a pure DOM toggle — owns no timers, never navigates (DESIGN.md §2).
+  function setSheetOpen(open) {
+    const sheet = $('settings-sheet');
+    if (sheet.hidden === !open) return;              // already in the requested state
+    const hadFocus = sheet.contains(document.activeElement);
+    sheet.hidden = !open;
+    for (const el of document.body.children) {       // inert the whole background, not just pointers
+      if (el !== sheet && el.tagName !== 'SCRIPT') el.inert = open;
+    }
+    if (open) {
+      renderSoundControls(); renderDeckPicker(); renderSheetPickers();
+      // Focus the TOP-anchored heading, never the bottom-anchored Done button: on
+      // short viewports the dvh-capped panel scrolls, and focusing Done auto-scrolled
+      // the sheet open mid-list. The heading carries tabindex="-1" (its focus ring is
+      // already suppressed); pinning scrollTop makes the open position deterministic.
+      sheet.querySelector('.sheet-panel').scrollTop = 0;
+      $('sheet-title').focus({ preventScroll: true });
+    }
+    else if (hadFocus) $('settings-btn').focus();    // hand focus back to the opener
+  }
+
+  $('settings-btn').onclick = () => setSheetOpen(true);
+  $('sheet-backdrop').onclick = () => setSheetOpen(false);
+  $('sheet-close').onclick = () => setSheetOpen(false);
+  document.addEventListener('keydown', (e) => { /* raw-timer-ok: permanent listener */
+    if (e.key !== 'Escape') return;
+    if (!$('deck-editor-sheet').hidden) return closeDeckEditor();  // the editor sits over the sheet flow — back to settings
+    setSheetOpen(false);
+  });
+  $('sheet-sound').onclick = () => { setSetting('sound', !settings.sound); renderSoundControls(); };
+  $('sheet-haptics').onclick = () => { setSetting('haptics', !settings.haptics); renderSoundControls(); };
+  $('sheet-clear-hof').onclick = () => {   // clear history (3.7): data op only — the sheet never navigates
+    if (!confirm('Clear the Hall of Fame?')) return;
+    store.del(KEYS.hof);
+    renderHofList();                       // sync the setup-screen list if it's open behind the sheet
+  };
+
+  // Deck editor sheet (Phase 4.1): opened from the settings sheet's deck section (New
+  // deck / per-deck Edit). setDeckEditorOpen mirrors setSheetOpen's modal dance; show()
+  // force-closes it; every USER dismissal (Save/Cancel/Escape/backdrop) lands back on
+  // the settings sheet. Pure DOM + storage writes: no timers, no navigation.
+  let editingDeckId = null;                // null = composing a NEW deck; else the id being edited
+
+  function parseDeckPrompts(raw) {         // one prompt per line, trimmed, blanks dropped, capped (§8.1)
+    return raw.split('\n').map(s => s.trim()).filter(Boolean)
+      .map(s => s.slice(0, CONFIG.DECK_PROMPT_MAX));
+  }
+
+  function renderDeckValidation() {        // the friendly count/validation line + save gating
+    const n = parseDeckPrompts($('deck-prompts-input').value).length;
+    const named = !!$('deck-name-input').value.trim();
+    const ok = named && n >= CONFIG.DECK_MIN_PROMPTS;
+    const line = $('deck-count');
+    line.textContent =
+      n < CONFIG.DECK_MIN_PROMPTS ? `${n} prompt${n === 1 ? '' : 's'} — need at least ${CONFIG.DECK_MIN_PROMPTS}`
+      : ok                        ? `${n} prompts — ready to save!`
+      :                             `${n} prompts — now name your deck!`;
+    line.classList.toggle('ok', ok);
+    $('deck-save-btn').disabled = !ok;
+  }
+
+  function setDeckEditorOpen(open) {       // the same modal dance as setSheetOpen (G-UX5)
+    const sheet = $('deck-editor-sheet');
+    if (sheet.hidden === !open) return;    // already in the requested state
+    sheet.hidden = !open;
+    for (const el of document.body.children) {       // inert the whole background, not just pointers
+      if (el !== sheet && el.tagName !== 'SCRIPT') el.inert = open;
+    }
+    if (open) { renderDeckValidation(); $('deck-name-input').focus(); }
+  }
+
+  function openDeckEditor(deckId = null) {
+    const deck = deckId ? loadDecks().decks[deckId] : null;
+    editingDeckId = deck ? deckId : null;  // a stale/unknown id composes a new deck instead
+    $('deck-editor-title').textContent = deck ? '✏️ Edit deck' : '🃏 New deck';
+    $('deck-name-input').value = deck?.name ?? '';
+    $('deck-prompts-input').value = deck ? deck.prompts.join('\n') : '';
+    setSheetOpen(false);                   // one modal at a time
+    setDeckEditorOpen(true);
+  }
+
+  function closeDeckEditor() {             // user dismissal → back to the settings sheet
+    setDeckEditorOpen(false);
+    setSheetOpen(true);                    // reopening rebuilds the picker + manage rows
+  }
+
+  $('deck-editor-backdrop').onclick = closeDeckEditor;
+  $('deck-cancel-btn').onclick = closeDeckEditor;
+  $('deck-name-input').addEventListener('input', renderDeckValidation);
+  $('deck-prompts-input').addEventListener('input', renderDeckValidation);
+
+  $('deck-save-btn').onclick = () => {
+    if ($('deck-editor-sheet').hidden) return;   // key-repeat double fire: the first save already closed the editor
+    const name = $('deck-name-input').value.trim().slice(0, CONFIG.DECK_NAME_MAX);
+    const prompts = parseDeckPrompts($('deck-prompts-input').value);
+    if (!name || prompts.length < CONFIG.DECK_MIN_PROMPTS) return;  // belt-and-braces: the button is disabled
+    const d = loadDecks();
+    d.decks[editingDeckId ?? 'c' + Date.now().toString(36)] = { name, prompts };  // generated id (§8.1) — deliberately not crypto
+    store.set(KEYS.decks, d);
+    closeDeckEditor();
+  };
+
+  $('resume-btn').onclick = () => { if (pendingResume) resumeGame(pendingResume); };
+
+  $('discard-btn').onclick = () => {       // keep the roster, drop the progress
+    pendingResume = null;
+    store.del(KEYS.game);
+    renderResumeBanner();                  // setup→setup is not an edge, so re-render in place
+    saveGame();                            // re-persist the kept roster as a setup snapshot
+  };
+
+  // ---------- PERSISTENCE ----------
+  // The game snapshot rides every transition() plus roster/rating mutations (DESIGN.md §4).
+  // Timer-owning states rewind via STATES[s].resume, so a mid-flight turn honestly restarts.
+  let pendingResume = null;                // loaded snapshot awaiting the user's Resume/Discard choice
+
+  function saveGame() {
+    if (pendingResume) return;             // never clobber a snapshot the user hasn't decided on
+    if (!machine.state) return;
+    const phase = STATES[machine.state].resume ?? machine.state;
+    if (!game || phase === 'setup') {      // setup phase: roster-only snapshot, restored silently on reload
+      if (roster.length) store.set(KEYS.game, { v: 2, savedAt: Date.now(), phase: 'setup', roster: roster.slice(), game: null });
+      else store.del(KEYS.game);
+      return;
+    }
+    store.set(KEYS.game, { v: 2, savedAt: Date.now(), phase, game });
+  }
+
+  function loadSnapshot() {                // BOOT-only: returns a valid snapshot or silently discards it
+    const snap = store.get(KEYS.game);
+    if (!snap) return null;
+    const ok = snap.v === 2                // no migration code, ever — games last minutes; v1 saves are silently discarded
+      && typeof snap.savedAt === 'number'
+      && Date.now() - snap.savedAt <= CONFIG.RESUME_MAX_AGE_MS
+      && (snap.phase === 'setup'
+            ? Array.isArray(snap.roster)
+            : !!STATES[snap.phase]
+              && Array.isArray(snap.game?.players)
+              && snap.game.players.length >= CONFIG.MIN_PLAYERS);
+    if (!ok) { store.del(KEYS.game); return null; }
+    return snap;
+  }
+
+  function resumeGame(snap) {
+    game = snap.game;
+    game.settings = Object.freeze(game.settings);   // re-freeze the per-game snapshot (DESIGN.md §5)
+    pendingResume = null;
+    machine.state = null;                  // resume targets are always legal from a boot-null state
+    transition(snap.phase);
+  }
+
+  function renderResumeBanner() {
+    const banner = $('resume-banner');
+    if (!pendingResume) { banner.hidden = true; syncMascot(); return; }   // hiding the banner changes the height too
+    const g = pendingResume.game;
+    if (pendingResume.phase === 'winner') {        // finished game: no "next" performer exists
+      $('resume-msg').textContent =
+        `Finished game — ${g.players.length} players. Resume to see the results.`;
+    } else if (pendingResume.phase === 'roundEnd') {   // between rounds: turnIdx has run past the order
+      $('resume-msg').textContent =
+        `Game in progress — ${g.players.length} players, round ${g.round} done. Resume for round ${g.round + 1}.`;
+    } else {
+      const nextId = g.tiebreak ? g.tiebreak.order[g.tiebreak.turnIdx] : g.order[g.turnIdx];
+      const next = g.players.find(p => p.id === nextId);
+      $('resume-msg').textContent =
+        `Game in progress — ${g.players.length} players, round ${g.round}, ${next?.name ?? '?'} up next.`;
+    }
+    banner.hidden = false;
+    syncMascot();                          // the banner changes the setup screen's height
+  }
+
+  // Courtesy guard against accidental pull-to-refresh — persistence is the real safety net.
+  // TEST opt-out keeps Playwright reloads from hanging (DESIGN.md §4).
+  window.addEventListener('beforeunload', (e) => { /* raw-timer-ok: permanent listener */
+    if (game !== null && machine.state !== 'setup' && machine.state !== 'winner' && !TEST) e.preventDefault();
+  });
+
   // ---------- CONFETTI ----------
+  // rafLoop lifecycle (DESIGN.md §3): no always-on loop. burstConfetti() starts a registry
+  // rafLoop owned by the current state (winner); the frame returns false once every particle
+  // is dead, and a transition away cancels it like any other timer.
   const canvas = $('confetti');
   const ctx = canvas.getContext('2d');
   let confetti = [];
+  let confettiLoopId = 0;                  // active-loop token: nonzero while a loop is scheduling frames
   function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -652,43 +2467,279 @@
   window.addEventListener('resize', resize);
   resize();
 
-  function burstConfetti() {
+  function clearConfetti() {               // fresh canvas: a cancelled loop leaves a frozen frame behind
+    confetti = [];
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // burstConfetti(count, origin) — G-UX8: no origin = full-screen rain from the top
+  // (the winner celebration); an {x, y} origin = a radial pop from that point (the
+  // 5-star micro-burst). Every 5th particle is a 🥜 glyph drawn with fillText +
+  // rotation — deterministic i%5, not Math.random(): visually identical 1-in-5
+  // density, but the smoke suite counts the peanuts, and an unseeded coin flip made
+  // that assertion flake ~1 in 800 CI runs (0.8^30 ≈ 0.124% all-paper bursts).
+  // x0/y0 record each particle's spawn point: physics advances x/y every frame, so
+  // origin assertions in the suite read the frozen spawn coords instead of racing
+  // the live sim across a CDP round-trip.
+  function burstConfetti(count = 220, origin = null) {
     const colors = ['#ff006e','#fb5607','#ffbe0b','#8338ec','#3a86ff','#00e676','#ffeb3b'];
-    for (let i = 0; i < 220; i++) {
+    for (let i = 0; i < count; i++) {
+      const x = origin ? origin.x : Math.random() * canvas.width;
+      const y = origin ? origin.y : -20 - Math.random() * canvas.height * 0.5;
       confetti.push({
-        x: Math.random() * canvas.width,
-        y: -20 - Math.random() * canvas.height * 0.5,
-        vx: (Math.random() - 0.5) * 6,
-        vy: 2 + Math.random() * 4,
+        x, y, x0: x, y0: y,
+        vx: (Math.random() - 0.5) * (origin ? 10 : 6),
+        vy: origin ? -(2 + Math.random() * 6) : 2 + Math.random() * 4,
         size: 6 + Math.random() * 8,
         rot: Math.random() * Math.PI * 2,
         vr: (Math.random() - 0.5) * 0.3,
         color: colors[Math.floor(Math.random() * colors.length)],
+        glyph: i % 5 === 0 ? '🥜' : null,
         life: 300 + Math.random() * 200,
       });
     }
-  }
-  function loopConfetti() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    confetti = confetti.filter(p => p.life > 0 && p.y < canvas.height + 30);
-    confetti.forEach(p => {
-      p.x += p.vx;
-      p.y += p.vy;
-      p.vy += 0.08;
-      p.rot += p.vr;
-      p.life--;
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate(p.rot);
-      ctx.fillStyle = p.color;
-      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
-      ctx.restore();
+    // Take ownership of the canvas. The id handshake makes staleness harmless: a loop
+    // cancelled by timers.clearAll() never runs again, and one superseded by a newer
+    // burst bows out on its next frame — so a fresh loop always animates new particles.
+    const id = ++confettiLoopId;
+    timers.rafLoop(() => {
+      if (id !== confettiLoopId) return false;       // a newer burst owns the canvas now
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      confetti = confetti.filter(p => p.life > 0 && p.y < canvas.height + 30);
+      if (!confetti.length) { confettiLoopId = 0; return false; }  // clear the active flag; stop scheduling
+      confetti.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.08;
+        p.rot += p.vr;
+        p.life--;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        if (p.glyph) {                     // 🥜 particles spin like the paper ones (G-UX8)
+          ctx.font = `${Math.round(p.size * 2)}px serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(p.glyph, 0, 0);
+        } else {
+          ctx.fillStyle = p.color;
+          ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+        }
+        ctx.restore();
+      });
     });
-    requestAnimationFrame(loopConfetti);
   }
-  loopConfetti();
 
-  renderPlayers();
+  // ---------- SHARE CARD ----------
+  // Phase 4.2 (DESIGN.md §8.2): renderShareCard(results) paints the winner screen's
+  // getResults() view-model — and NOTHING else: superlative names resolve via
+  // results.rows (+ the per-player results.roster that team games add in 4.3), never
+  // nameOf()/game — onto an OFFSCREEN 1080x1350 canvas in the game's neo-brutalist
+  // language (flat panels, thick ink borders, hard offset shadows, the five-stop
+  // gradient). The canvas IS the whole asset pipeline (hard invariant 1): no new
+  // files, no fetched fonts — Comic Sans falls back to the device's bold system-ui.
+  // Every glyph paints through a try/catch'd helper, so a tofu emoji on an exotic
+  // device costs a decoration, never the card. Long names measure-and-ellipsize.
+  // Pure draw code: no DOM insertion, no timers, no state.
+  const SHARE_URL = 'elliotmattingly.github.io/gonuts';
+
+  function renderShareCard(results) {
+    const W = 1080, H = 1350, PAD = 72;
+    const INK = '#1a1a2e', PAPER = '#fffaf0', GOLD = '#ffeb3b', PURPLE = '#8338ec';
+    const FONT = "'Comic Sans MS', 'Chalkboard SE', system-ui, sans-serif";
+    const card = document.createElement('canvas');
+    card.width = W; card.height = H;
+    const d = card.getContext('2d');
+    const font = (px) => `bold ${Math.round(px)}px ${FONT}`;
+
+    const rr = (x, y, w, h, r) => {        // manual rounded-rect path (ctx.roundRect is too new for older devices)
+      r = Math.min(r, w / 2, h / 2);
+      d.beginPath();
+      d.moveTo(x + r, y);
+      d.arcTo(x + w, y, x + w, y + h, r);
+      d.arcTo(x + w, y + h, x, y + h, r);
+      d.arcTo(x, y + h, x, y, r);
+      d.arcTo(x, y, x + w, y, r);
+      d.closePath();
+    };
+    const panel = (x, y, w, h, { r = 34, off = 10, stroke = 7, fill = PAPER } = {}) => {
+      d.fillStyle = INK; rr(x + off, y + off, w, h, r); d.fill();   // hard shadow — never a blur
+      d.fillStyle = fill; rr(x, y, w, h, r); d.fill();
+      d.lineWidth = stroke; d.strokeStyle = INK; rr(x, y, w, h, r); d.stroke();
+    };
+    const ellipsize = (t, maxW) => {       // measures with the CURRENT d.font
+      if (d.measureText(t).width <= maxW) return t;
+      let s = t;
+      while (s.length > 1 && d.measureText(s.trimEnd() + '…').width > maxW) s = s.slice(0, -1);
+      return s.trimEnd() + '…';
+    };
+    const text = (t, x, y, px, { fill = PAPER, shadow = 0, stroke = 0, align = 'center', maxW = 0, angle = 0 } = {}) => {
+      d.save();
+      try {
+        d.font = font(px); d.textAlign = align; d.textBaseline = 'middle';
+        if (maxW) t = ellipsize(t, maxW);
+        if (angle) { d.translate(x, y); d.rotate(angle * Math.PI / 180); x = y = 0; }
+        if (shadow) {
+          d.fillStyle = INK;
+          // Color-emoji glyphs ignore fillStyle, which would print a ghost duplicate —
+          // brightness(0) turns the whole shadow pass ink. Progressive: engines without
+          // canvas filters ignore the assignment and just draw the plain offset pass.
+          d.filter = 'brightness(0)';
+          d.fillText(t, x + shadow, y + shadow);
+          d.filter = 'none';
+        }
+        if (stroke) {                      // ink outline (sticker look) — keeps gold legible on the amber band
+          d.lineWidth = stroke; d.strokeStyle = INK; d.lineJoin = 'round';
+          d.strokeText(t, x, y);
+        }
+        d.fillStyle = fill; d.fillText(t, x, y);
+      } catch {}
+      d.restore();
+    };
+    const fitPx = (t, px, minPx, maxW) => {          // shrink-to-fit; ellipsize catches what's left
+      d.font = font(px);
+      while (px > minPx && d.measureText(t).width > maxW) { px -= 4; d.font = font(px); }
+      return px;
+    };
+
+    // Backdrop: the app's five-stop gradient + a seeded confetti sprinkle (mulberry32:
+    // identical pixels on every render — cheap festivity, screenshot-diff friendly).
+    const bg = d.createLinearGradient(0, 0, W, H);
+    ['#ff006e', '#fb5607', '#ffbe0b', '#8338ec', '#3a86ff'].forEach((col, i) => bg.addColorStop(i / 4, col));
+    d.fillStyle = bg; d.fillRect(0, 0, W, H);
+    const rnd = mulberry32(7);
+    const colors = ['#ff006e', '#fb5607', '#ffbe0b', '#8338ec', '#3a86ff', '#00e676', '#ffeb3b'];
+    for (let i = 0; i < 80; i++) {
+      d.save();
+      d.translate(rnd() * W, rnd() * H);
+      d.rotate(rnd() * Math.PI * 2);
+      d.globalAlpha = 0.3;
+      d.fillStyle = colors[Math.floor(rnd() * colors.length)];
+      const s = 8 + rnd() * 16;
+      d.fillRect(-s / 2, -s / 2, s, s * 0.6);
+      d.restore();
+    }
+
+    // Header: wobbly title, crown, winner name(s), star line — the winner screen's stack.
+    text('GO NUTS!', W / 2, 128, 126, { shadow: 9, angle: -3 });
+    text('👑', W / 2, 268, 116);
+    text(results.coWinners ? 'CO-CRAZIEST OF THEM ALL' : 'CRAZIEST OF THEM ALL', W / 2, 370, 38, { shadow: 4 });
+    const names = results.winners.map(w => w.name).join(' & ');
+    const namePx = fitPx(names, 96, 40, W - PAD * 2);   // 40px floor: two 14-char co-winners fit un-ellipsized
+    text(names, W / 2, 447, namePx, { fill: GOLD, shadow: 7, stroke: Math.max(4, Math.round(namePx * 0.09)),
+                                      maxW: W - PAD * 2, angle: -2 });
+    const w0 = results.winners[0];
+    text(`${w0.total} ⭐  ·  avg ${w0.avg.toFixed(1)}`, W / 2, 534, 44, { shadow: 4 });
+    let top = 592;                                      // the content band opens under the star line…
+    if (w0.members) {                                   // …but a team crown (4.3) first names its players,
+      text(results.winners.map(t => t.members.join(', ')).join(' & '),   // mirroring #winner-members
+           W / 2, 592, 32, { shadow: 3, maxW: W - PAD * 2 });
+      top = 646;                                        // the band shrinks; the budget loop below absorbs it
+    }
+
+    // Vertical budget: the footer line is fixed; superlative pills bid for their space;
+    // the scoreboard panel takes the rest — shrinking row height first, then trading
+    // pills away (a full scoreboard beats a third pill), and only as a last resort
+    // truncating rows behind a "+N more" line. Nothing can overlap by construction.
+    const bottom = H - 96;                           // the content band ends above the fixed footer
+    const headH = 84, padB = 26, pillH = 96, pillGap = 16, pillLead = 24;
+    const sups = results.superlatives.slice(0, 3);
+    let rows = results.rows, more = 0, rowH = 0;
+    for (;;) {
+      const supsH = sups.length ? pillLead + sups.length * pillH + (sups.length - 1) * pillGap : 0;
+      const rowArea = (bottom - top) - supsH - headH - padB;
+      rowH = rows.length <= 4 ? 84 : 62;
+      if (rowH * rows.length > rowArea) rowH = Math.max(44, Math.floor(rowArea / rows.length));
+      if (rowH * rows.length <= rowArea) break;      // everything fits
+      if (sups.length) { sups.pop(); continue; }     // trade a pill for scoreboard rows
+      const fit = Math.max(2, Math.floor(rowArea / rowH));
+      more = rows.length - (fit - 1);
+      rows = rows.slice(0, fit - 1);
+      break;
+    }
+    const supsH = sups.length ? pillLead + sups.length * pillH + (sups.length - 1) * pillGap : 0;
+    const panelH = headH + (rows.length + (more ? 1 : 0)) * rowH + padB;
+    let y = top + Math.max(0, (bottom - top - panelH - supsH) / 2);   // small games: center the block
+
+    // Ranked scoreboard: rank + name left, stars right; champion row(s) get a gold strip.
+    panel(PAD, y, W - PAD * 2, panelH);
+    text('🏆 FINAL SCORES', W / 2, y + headH / 2 + 8, 40, { fill: INK });
+    const inX = PAD + 44, inR = W - PAD - 44, inW = inR - inX;
+    let ry = y + headH + rowH / 2;
+    rows.forEach((r, i) => {
+      if (results.winners.some(w => w.id === r.id)) {
+        d.fillStyle = GOLD; rr(PAD + 20, ry - rowH / 2 + 4, W - PAD * 2 - 40, rowH - 8, 14); d.fill();
+        d.lineWidth = 3; d.strokeStyle = INK; d.stroke();
+      }
+      const px = Math.min(40, Math.round(rowH * 0.58));
+      d.font = font(px);
+      const starsTxt = `${r.total} ⭐`;
+      const starsW = d.measureText(starsTxt).width;
+      text(`${i + 1}. ${r.name}`, inX, ry, px, { fill: INK, align: 'left', maxW: inW - starsW - 24 });
+      text(starsTxt, inR, ry, px, { fill: INK, align: 'right' });
+      ry += rowH;
+    });
+    if (more) text(`…and ${more} more went nuts`, W / 2, ry, Math.min(34, Math.round(rowH * 0.5)), { fill: INK });
+    y += panelH + pillLead;
+
+    // Superlative pills (>= 3 players): title in the app's purple, names in ink,
+    // detail line below — names resolve via the results view-model only. Team rows
+    // carry team ids, so the per-player superlative ids resolve through the roster
+    // the team view-model adds; individual results have no roster and keep resolving
+    // through rows exactly as before (Phase 4.3).
+    const nameById = new Map([...results.rows, ...(results.roster ?? [])].map(r => [r.id, r.name]));
+    for (const s of sups) {
+      panel(PAD, y, W - PAD * 2, pillH, { r: 26, off: 7, stroke: 5 });
+      const who = s.playerIds.map(id => nameById.get(id) ?? '?').join(' & ');
+      d.font = font(30);
+      const lead = `${s.title}: `;
+      const leadW = d.measureText(lead).width;
+      const whoTxt = ellipsize(who, (W - PAD * 2) - 80 - leadW);
+      const x0 = W / 2 - (leadW + d.measureText(whoTxt).width) / 2;
+      text(lead, x0, y + 36, 30, { fill: PURPLE, align: 'left' });
+      text(whoTxt, x0 + leadW, y + 36, 30, { fill: INK, align: 'left' });
+      text(s.detail, W / 2, y + 70, 24, { fill: '#43435a', maxW: W - PAD * 2 - 80 });
+      y += pillH + pillGap;
+    }
+
+    // Footer: where to find the game.
+    text(`🥜 ${SHARE_URL} 🥜`, W / 2, H - 56, 34, { shadow: 3 });
+    return card;
+  }
+
+  // ---------- SW REGISTRATION + BOOT ----------
+  // SW (DESIGN.md §9): network-first shell cache, registered only on https — skipped under
+  // TEST and on file://, both of which keep working exactly as today. Registration failure
+  // is swallowed: the SW is pure progressive enhancement.
+  if ('serviceWorker' in navigator && !TEST && location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+  // visibilitychange is registered ONCE at boot (never per-turn): reads run.turnEndsAt from module state, so a
+  // return from a hidden tab repaints honestly — and ends the turn if the deadline passed.
+  document.addEventListener('visibilitychange', () => { /* raw-timer-ok: permanent listener */
+    if (document.hidden) return;
+    if (machine.state === 'performing') repaintRing();
+    if (wakeLock.wants(machine.state)) wakeLock.sync(machine.state);  // re-acquire after tab hide (DESIGN.md §3)
+  });
+  window.addEventListener('resize', syncMascot); /* raw-timer-ok: permanent listener — rotation/keyboard resizes re-measure the bow-out */
+  // Scroll events don't bubble, so the corner-chrome stamp listens in the capture phase;
+  // passive: it only toggles a body class, never preventDefault.
+  document.addEventListener('scroll', syncChrome, { capture: true, passive: true }); /* raw-timer-ok: permanent listener */
+  $('ring-fg').setAttribute('stroke-dasharray', CONFIG.RING_CIRC);
+  renderSoundControls();                   // paint the persisted mute state onto the fixed chrome
+  const bootSnap = loadSnapshot();         // resume check (DESIGN.md §4)
+  if (bootSnap) {
+    if (bootSnap.phase === 'setup') {
+      roster = bootSnap.roster.slice();    // mid-setup refresh: restore the typed names silently
+    } else {
+      pendingResume = bootSnap;            // enterSetup shows the resume banner
+      roster = bootSnap.game.players.map(p => p.name);   // Discard keeps this roster
+    }
+  }
+  transition('setup');                     // boot always lands on setup (machine.state null → always legal)
+  if (TEST) window.__gonuts = { machine, timers, transition, getGame: () => game, settings, CONFIG,
+                                getConfetti: () => confetti,     // particle peek for the G-UX8 scenario
+                                getResults, renderShareCard };   // share-card peek for S16 (Phase 4.2)
 })();
 </script>
 </body>

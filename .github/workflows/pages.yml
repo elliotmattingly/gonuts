@@ -1,8 +1,9 @@
-name: Deploy to GitHub Pages
+name: Test & Deploy to GitHub Pages
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -15,16 +16,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cd tests && npm ci && npx playwright install --with-deps chromium && npm test
+      - name: Structural lints
+        run: |
+          # raw timers banned outside annotated plumbing lines:
+          ! grep -nE '\bset(Timeout|Interval)\(|requestAnimationFrame\(' index.html | grep -v 'raw-timer-ok'
+          # forced clicks banned in the suite (node_modules excluded — npm ci ran above):
+          ! grep -rn --exclude-dir=node_modules 'force: *true' tests/
+
   deploy:
+    needs: test                       # smoke tests gate every Pages publish (R10)
+    if: github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Package allowlisted site
+        run: |
+          mkdir public && cp index.html public/
+          for f in manifest.webmanifest sw.js icon.svg og.png apple-touch-icon.png; do [ -f "$f" ] && cp "$f" public/ || true; done
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: public
       - id: deployment
         uses: actions/deploy-pages@v4
