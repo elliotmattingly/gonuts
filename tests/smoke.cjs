@@ -60,11 +60,14 @@ async function startGame(page, names) {
 }
 
 // Clicks I'M READY, waits out countdown + the 2s turn, then submits the scripted
-// star ratings (one per rater, in rater-queue order).
+// star ratings (one per rater, in rater-queue order). From Phase 3.4 every rating
+// sits behind the pass-the-phone interstitial, so each rater clicks through it.
 async function playTurn(page, ratings) {
   await page.click('#begin-turn-btn');
-  await page.waitForSelector('#rating-screen.active', { timeout: 15000 });
   for (const stars of ratings) {
+    await page.waitForSelector('#pass-screen.active', { timeout: 15000 });
+    await page.click('#pass-rate-btn');
+    await page.waitForSelector('#rating-screen.active');
     await page.click(`#stars .star:nth-child(${stars})`);
     await page.click('#submit-rating-btn');
   }
@@ -156,21 +159,23 @@ scenario('S3 double begin-turn is blocked; timer runs at 1x', async ({ page, bas
   assert.strictEqual(await timerCount(page), 2, 'no leaked interval after the double fire');
 });
 
-// S4 — Wall-clock: with t=2 the GO → rating transition happens in 2s ± 400ms.
+// S4 — Wall-clock: with t=2 the GO → pass transition (the turn's end, Phase 3.4)
+// happens in 2s ± 400ms.
 scenario('S4 wall-clock turn length is honest', async ({ page, base }) => {
   await page.goto(base + Q);
   await startGame(page, ['Ann', 'Ben']);
   await page.click('#begin-turn-btn');
   await page.waitForSelector('#timer-screen.active');
   const t0 = Date.now();
-  await page.waitForSelector('#rating-screen.active', { timeout: 5000 });
+  await page.waitForSelector('#pass-screen.active', { timeout: 5000 });
   const dt = Date.now() - t0;
   assert.ok(Math.abs(dt - 2000) <= 400, `turn ran ${dt}ms, expected 2000 ± 400`);
 });
 
 // S5 — Resume: reload mid-rating → banner; Resume restores players/turn/ratings
-// (rewound per DESIGN.md §4 — rating resumes as rating in Phase 1); Discard keeps roster.
-scenario('S5 reload mid-rating: resume restores, discard keeps roster', async ({ page, base }) => {
+// (rewound per DESIGN.md §4 — from Phase 3.4 a mid-rating reload rewinds to 'pass',
+// so the current rater re-enters via the interstitial); Discard keeps roster.
+scenario('S5 reload mid-rating: resume rewinds to pass, discard keeps roster', async ({ page, base }) => {
   await page.goto(base + Q);
   await startGame(page, ['Ann', 'Ben']);
   // Phase 3.2: performer order is shuffled — resolve who actually goes first/second.
@@ -182,7 +187,9 @@ scenario('S5 reload mid-rating: resume restores, discard keeps roster', async ({
   await playTurn(page, [4]);                      // first performs, second rates 4
   await page.waitForSelector('#intro-screen.active');
   await page.click('#begin-turn-btn');            // second player's turn
-  await page.waitForSelector('#rating-screen.active', { timeout: 15000 });
+  await page.waitForSelector('#pass-screen.active', { timeout: 15000 });
+  await page.click('#pass-rate-btn');             // first is mid-rating when the reload hits
+  await page.waitForSelector('#rating-screen.active');
 
   await page.reload();
   await page.waitForSelector('#setup-screen.active');
@@ -191,6 +198,10 @@ scenario('S5 reload mid-rating: resume restores, discard keeps roster', async ({
   assert.ok(msg.includes('2 players') && msg.includes(`${second.name} up next`), `unexpected banner: ${msg}`);
 
   await page.click('#resume-btn');
+  await page.waitForSelector('#pass-screen.active');   // rating rewinds to the interstitial (DESIGN.md §4)
+  assert.strictEqual(await state(page), 'pass');
+  assert.strictEqual(await text(page, '#pass-name'), first.name, 'the interrupted rater is re-summoned');
+  await page.click('#pass-rate-btn');
   await page.waitForSelector('#rating-screen.active');
   assert.strictEqual(await state(page), 'rating');
   assert.strictEqual(await text(page, '#rate-name'), second.name);
@@ -298,7 +309,9 @@ scenario('G-UX8 five-star tap fires an origin micro-burst with 🥜 glyphs', asy
   await page.goto(base + Q);
   await startGame(page, ['Ann', 'Ben']);
   await page.click('#begin-turn-btn');
-  await page.waitForSelector('#rating-screen.active', { timeout: 15000 });
+  await page.waitForSelector('#pass-screen.active', { timeout: 15000 });   // Phase 3.4 interstitial
+  await page.click('#pass-rate-btn');
+  await page.waitForSelector('#rating-screen.active');
   assert.ok(await page.$eval('#confetti', el => getComputedStyle(el).display !== 'none'),
     'confetti canvas must be visible in the rating state (widened CSS gate)');
   const star = await page.$eval('#stars .star:nth-child(5)', el => {
@@ -327,14 +340,16 @@ scenario('G-UX8 five-star tap fires an origin micro-burst with 🥜 glyphs', asy
 // S9 — Illegal-transition fuzz: every from→to edge NOT in the state table must be a
 // guarded no-op (returns false, state unchanged).
 scenario('S9 illegal transitions are all blocked', async ({ page, base }) => {
-  // Mirror of the Phase 1 STATES table (DESIGN.md §2). A drift between this copy and
-  // the page's table surfaces as a fuzz failure — that is intentional.
+  // Mirror of the STATES table (DESIGN.md §2; pass row + widened edges from Phase 3.4).
+  // A drift between this copy and the page's table surfaces as a fuzz failure — that
+  // is intentional: any commit that touches the table must update this mirror too.
   const TABLE = {
     setup:      ['intro'],
     intro:      ['countdown', 'setup'],
     countdown:  ['performing', 'setup'],
-    performing: ['rating', 'setup'],
-    rating:     ['rating', 'intro', 'winner', 'setup'],
+    performing: ['pass', 'rating', 'setup'],
+    pass:       ['rating', 'setup'],
+    rating:     ['rating', 'pass', 'intro', 'winner', 'setup'],
     winner:     ['intro', 'setup'],
   };
   await page.goto(base + Q);
@@ -423,8 +438,10 @@ scenario('S12 prompts unique across turns; skip budget is per player', async ({ 
   await page.click('#begin-turn-btn');
   await page.waitForSelector('#timer-screen.active');
   assert.ok((await text(page, '#timer-prompt')).includes(second), 'timer screen renders the prompt line');
-  await page.waitForSelector('#rating-screen.active', { timeout: 15000 });
-  for (const stars of [4, 4]) {
+  for (const stars of [4, 4]) {                    // Phase 3.4: each rater enters via the interstitial
+    await page.waitForSelector('#pass-screen.active', { timeout: 15000 });
+    await page.click('#pass-rate-btn');
+    await page.waitForSelector('#rating-screen.active');
     await page.click(`#stars .star:nth-child(${stars})`);
     await page.click('#submit-rating-btn');
   }
@@ -447,6 +464,46 @@ scenario('S12 prompts unique across turns; skip budget is per player', async ({ 
   assert.ok(idxs.every(i => typeof i === 'number'), `turn entries record promptIdx (got ${JSON.stringify(idxs)})`);
   assert.strictEqual(new Set(idxs).size, idxs.length, 'recorded prompt indexes are unique');
   assert.strictEqual(new Set(drawn).size, drawn.length, 'every prompt shown was unique');
+});
+
+// S13 — Private rating (Phase 3.4): across every turn of a 3-player game, the pass
+// screen summons each rater exactly once, never the performer, in raterQueue order;
+// its button names the same rater; and only after the hand-off does the star UI show.
+scenario('S13 pass screen names each rater once, never the performer, in queue order', async ({ page, base }) => {
+  await page.goto(base + Q);
+  await startGame(page, ['Ann', 'Ben', 'Cai']);
+  const ratingsByTurn = [[3, 5], [2, 4], [5, 1]];  // any mix — S13 asserts the hand-off, not the totals
+  for (const ratings of ratingsByTurn) {
+    await page.waitForSelector('#intro-screen.active');
+    await page.click('#begin-turn-btn');
+    await page.waitForSelector('#pass-screen.active', { timeout: 15000 });
+    // Snapshot the queue exactly as openRating() built it (still un-consumed here).
+    const { performer, queueNames } = await page.evaluate(() => {
+      const g = window.__gonuts.getGame();
+      const nameOf = id => g.players.find(p => p.id === id).name;
+      return { performer: nameOf(g.turns.at(-1).performerId), queueNames: g.raterQueue.map(nameOf) };
+    });
+    assert.strictEqual(queueNames.length, 2, 'everyone but the performer rates');
+    assert.ok(!queueNames.includes(performer), 'the performer is never in the rater queue');
+    const summoned = [];
+    for (const stars of ratings) {
+      await page.waitForSelector('#pass-screen.active');
+      const rater = await text(page, '#pass-name');
+      summoned.push(rater);
+      assert.notStrictEqual(rater, performer, 'the pass screen never summons the performer');
+      assert.strictEqual(await text(page, '#pass-rate-btn'), `I'm ${rater} — rate!`,
+        'the hand-off button names the same rater');
+      assert.strictEqual(await page.$('#rating-screen.active'), null,
+        'the star UI stays hidden until the named rater takes the phone');
+      await page.click('#pass-rate-btn');
+      await page.waitForSelector('#rating-screen.active');
+      await page.click(`#stars .star:nth-child(${stars})`);
+      await page.click('#submit-rating-btn');
+    }
+    assert.deepStrictEqual(summoned, queueNames, 'pass screens run in raterQueue order');
+    assert.strictEqual(new Set(summoned).size, summoned.length, 'each rater is summoned exactly once');
+  }
+  await page.waitForSelector('#winner-screen.active');   // the hand-off flow still completes the game
 });
 
 // ---------- runner ----------

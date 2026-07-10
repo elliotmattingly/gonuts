@@ -251,6 +251,25 @@
     max-width: min(92vw, 560px);
   }
 
+  /* PASS SCREEN (Phase 3.4): the private-rating hand-off interstitial. Same header
+     stack as the timer screen; a compact centered action screen (no panel), so the
+     mascot's bottom-left corner stays clear — no reserve padding needed, and the
+     pose-watch rule for body[data-state="pass"] was pre-wired in Phase 2. */
+  #pass-screen .pass-emoji { font-size: clamp(64px, 16vw, 120px); }
+  #pass-screen .now-up {
+    font-size: clamp(28px, 6vw, 48px);
+    color: var(--paper);
+    text-shadow: 3px 3px 0 var(--ink);
+  }
+  #pass-screen .name {
+    font-size: clamp(40px, 10vw, 80px);
+    color: #ffeb3b;
+    text-shadow: 4px 4px 0 var(--ink);
+    margin: 0 0 10px;
+    transform: rotate(-2deg);
+    overflow-wrap: anywhere;   /* a max-length name at the clamp floor still beats 320px — wrap, never clip */
+  }
+
   /* RATING SCREEN */
   .rating-title {
     font-size: clamp(24px, 5vw, 38px);
@@ -540,6 +559,15 @@
   </div>
   <div class="crazy-word" id="crazy-word">LET'S GO!</div>
   <button id="stop-btn" class="danger">Stop</button>
+</section>
+
+<!-- PASS (Phase 3.4: the private-rating hand-off — the interstitial IS the privacy mechanism) -->
+<section id="pass-screen" class="screen">
+  <div class="pass-emoji" aria-hidden="true">🤫</div>
+  <div class="now-up">Hand the phone to</div>
+  <h2 class="name" id="pass-name" tabindex="-1">—</h2>
+  <div class="subtitle">Rate in secret — no peeking!</div>
+  <button id="pass-rate-btn" class="go">I'm ready — rate!</button>
 </section>
 
 <!-- RATING -->
@@ -1135,8 +1163,8 @@
     return { winners, rows, superlatives: [], coWinners: winners.length > 1 };
   }
 
-  function hasPrivateRating() {            // flips to true in Phase 3 (pass-the-phone private rating)
-    return false;
+  function hasPrivateRating() {            // Phase 3.4: every rating rides the pass-the-phone interstitial
+    return true;
   }
 
   function openRating() {                  // data op: log the turn entry + build the rater queue
@@ -1164,8 +1192,9 @@
     setup:      { screen: 'setup',     to: ['intro'],                              enter: enterSetup },
     intro:      { screen: 'intro',     to: ['countdown', 'setup'],                 enter: enterIntro },
     countdown:  { screen: 'countdown', to: ['performing', 'setup'],                enter: enterCountdown,  resume: 'intro' },
-    performing: { screen: 'timer',     to: ['rating', 'setup'],                    enter: enterPerforming, resume: 'intro' },
-    rating:     { screen: 'rating',    to: ['rating', 'intro', 'winner', 'setup'], enter: enterRating },
+    performing: { screen: 'timer',     to: ['pass', 'rating', 'setup'],            enter: enterPerforming, resume: 'intro' },
+    pass:       { screen: 'pass',      to: ['rating', 'setup'],                    enter: enterPass },
+    rating:     { screen: 'rating',    to: ['rating', 'pass', 'intro', 'winner', 'setup'], enter: enterRating, resume: 'pass' },
     winner:     { screen: 'winner',    to: ['intro', 'setup'],                     enter: enterWinner },
   };
   const machine = { state: null };         // null = boot; transitions from boot are always legal (resume targets)
@@ -1361,6 +1390,19 @@
     restartAnim(el);
   }
 
+  // -- pass (private rating, Phase 3.4) --
+  // The interstitial IS the privacy mechanism (DESIGN.md §7): only the named rater
+  // should advance past this screen, so the previous rater's stars are never on show
+  // while the phone changes hands. The star UI itself is unchanged. A mid-rating
+  // reload rewinds here (rating.resume = 'pass'), so the current rater re-rates.
+  function enterPass() {
+    const g = game;
+    if (!g || !currentPlayer() || !g.raterQueue.length) return transition('setup');
+    const rater = nameOf(g.raterQueue[0]);
+    $('pass-name').textContent = rater;
+    $('pass-rate-btn').textContent = `I'm ${rater} — rate!`;
+  }
+
   // -- rating --
   let currentRating = 0;                   // UI-only star selection — never persisted (DESIGN.md §4)
 
@@ -1458,6 +1500,9 @@
   };
 
   $('stop-btn').onclick = endTurn;
+
+  // Pass hand-off (3.4): pure navigation — enterRating reads raterQueue[0] itself.
+  $('pass-rate-btn').onclick = () => transition('rating');
 
   $('submit-rating-btn').onclick = () => {
     if (!currentRating || !game?.raterQueue.length) return;
