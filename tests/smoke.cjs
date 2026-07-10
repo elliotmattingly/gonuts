@@ -928,6 +928,100 @@ scenario('S15 custom deck: editor creates it, game draws from it, delete falls b
     "the finished game's frozen settings are untouched by the delete");
 });
 
+// S16 — Share card (Phase 4.2): the winner screen's 📸 Share renders the getResults()
+// view-model onto an offscreen 1080x1350 canvas and hands the PNG to
+// navigator.share({files}) where file sharing exists (stubbed here — headless Linux
+// Chromium ships no Web Share); a rapid double-tap lands inside the in-flight window
+// and must NOT stack a second dialog. Without canShare it falls back to clicking a
+// detached <a download> whose href is a blob URL. renderShareCard rides __gonuts
+// under TEST for the direct dimensions + non-uniform-pixels assertion.
+scenario('S16 share card: Web Share with files, blob download fallback, non-blank 1080x1350 canvas', async ({ page, base }) => {
+  await page.addInitScript(() => {
+    window.__shareCalls = [];
+    window.__downloads = [];
+    window.__shareMode = 'files';            // flipped to 'none' for the fallback leg
+    Object.defineProperty(navigator, 'canShare', {
+      configurable: true,
+      value: (data) => window.__shareMode === 'files' && !!data?.files?.length,
+    });
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      value: (data) => {
+        window.__shareCalls.push({
+          files: (data?.files || []).map(f => ({ name: f.name, type: f.type, size: f.size })),
+        });
+        return new Promise(r => setTimeout(r, 600)); /* raw-timer-ok: browser-side stub — holds share in flight for the double-tap check */
+      },
+    });
+    // The download fallback clicks a DETACHED <a download> — capture it instead of navigating.
+    HTMLAnchorElement.prototype.click = function () {
+      if (this.download) window.__downloads.push({ href: this.href, download: this.download });
+    };
+  });
+
+  await page.goto(base + Q);
+  await startGame(page, ['Ann', 'Ben', 'Cai']);
+  for (const ratings of [[3, 5], [2, 2], [5, 4]]) await playTurn(page, ratings);
+  await page.waitForSelector('#winner-screen.active');
+  assert.ok(await page.isVisible('#share-btn'), 'the Share button lives on the winner screen');
+
+  // Web Share path: two REAL back-to-back taps — the second lands while the stubbed
+  // share() is still pending, so the in-flight flag must swallow it (exactly one call).
+  await page.click('#share-btn');
+  await page.click('#share-btn');
+  const gotShare = await page.evaluate(async () => {
+    const t0 = Date.now();
+    while (!window.__shareCalls.length && Date.now() - t0 < 5000)
+      await new Promise(r => setTimeout(r, 50)); /* raw-timer-ok: browser-side poll */
+    return window.__shareCalls.length;
+  });
+  assert.ok(gotShare >= 1, 'share() was invoked');
+  await page.waitForTimeout(900);            // a leaked second dialog would have landed by now
+  const calls = await page.evaluate(() => window.__shareCalls);
+  assert.strictEqual(calls.length, 1, `rapid double-tap must produce exactly one share() (got ${calls.length})`);
+  assert.strictEqual(calls[0].files.length, 1, 'share() receives exactly one file');
+  assert.strictEqual(calls[0].files[0].name, 'go-nuts-results.png');
+  assert.strictEqual(calls[0].files[0].type, 'image/png');
+  assert.ok(calls[0].files[0].size > 20000, `the PNG must be a real card, not a blank (${calls[0].files[0].size} bytes)`);
+  assert.strictEqual(await page.evaluate(() => window.__downloads.length), 0,
+    'no download anchor while Web Share handles the card');
+  assert.strictEqual(await state(page), 'winner', 'share is a pure UI action — the machine never moves');
+
+  // Download fallback: canShare now says no → a detached <a download> click with a blob href.
+  await page.evaluate(() => { window.__shareMode = 'none'; });
+  await page.click('#share-btn');
+  const dls = await page.evaluate(async () => {
+    const t0 = Date.now();
+    while (!window.__downloads.length && Date.now() - t0 < 5000)
+      await new Promise(r => setTimeout(r, 50)); /* raw-timer-ok: browser-side poll */
+    return window.__downloads;
+  });
+  assert.strictEqual(dls.length, 1, 'exactly one download anchor click');
+  assert.strictEqual(dls[0].download, 'go-nuts-results.png', 'the download carries the right filename');
+  assert.match(dls[0].href, /^(blob:|data:image\/png)/, `download href must be a blob/data URL (got ${dls[0].href.slice(0, 40)})`);
+  assert.strictEqual(await page.evaluate(() => window.__shareCalls.length), 1,
+    'share() untouched on the fallback path');
+
+  // Direct render assertion: 1080x1350, fully painted, non-uniform pixel data.
+  const cardInfo = await page.evaluate(() => {
+    const g = window.__gonuts;
+    const c = g.renderShareCard(g.getResults(g.getGame()));
+    const d = c.getContext('2d');
+    const { data } = d.getImageData(0, 0, c.width, c.height);
+    const seen = new Set();
+    let opaque = true;
+    for (let i = 0; i < data.length; i += 3989 * 4) {        // prime stride: ~365 samples across the card
+      seen.add(`${data[i]},${data[i + 1]},${data[i + 2]}`);
+      if (data[i + 3] !== 255) opaque = false;
+    }
+    return { w: c.width, h: c.height, distinct: seen.size, opaque };
+  });
+  assert.strictEqual(cardInfo.w, 1080, 'card width');
+  assert.strictEqual(cardInfo.h, 1350, 'card height');
+  assert.ok(cardInfo.distinct > 12, `card pixels must be non-uniform (got ${cardInfo.distinct} distinct sampled colors)`);
+  assert.ok(cardInfo.opaque, 'card must be fully painted — no transparent holes');
+});
+
 // ---------- runner ----------
 (async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

@@ -758,6 +758,7 @@
   </div>
   <div id="superlatives" hidden></div>
   <div class="row" style="margin-top:20px;">
+    <button id="share-btn">📸 Share results</button>
     <button id="play-again-btn" class="primary">Play Again (Same Crew)</button>
     <button id="new-game-btn">New Game</button>
   </div>
@@ -1959,6 +1960,36 @@
     transition('setup');
   };
 
+  // Share card (Phase 4.2): a pure UI action — it mutates no game flow, so it carries
+  // no transition and no machine edge; the in-flight flag is the idempotency guard (a
+  // rapid double-tap must never stack two share dialogs). Web Share with {files} where
+  // the platform offers it — a user cancel rejects (AbortError) and is NOT an error —
+  // else a blob-URL <a download> click. The previous blob URL is revoked on the next
+  // share, so at most one lives at a time (no timers involved).
+  let shareBusy = false;
+  let shareBlobUrl = null;
+  $('share-btn').onclick = async () => {
+    if (shareBusy || machine.state !== 'winner' || !game) return;
+    shareBusy = true;
+    try {
+      const card = renderShareCard(getResults(game));
+      const blob = await new Promise(res => card.toBlob(res, 'image/png'));
+      if (!blob) return;
+      const file = new File([blob], 'go-nuts-results.png', { type: 'image/png' });
+      if (navigator.canShare?.({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: 'Go Nuts!' }); } catch {}
+      } else {
+        if (shareBlobUrl) URL.revokeObjectURL(shareBlobUrl);
+        shareBlobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = shareBlobUrl;
+        a.download = 'go-nuts-results.png';
+        a.click();                         // detached anchor: no DOM footprint, nothing to clean up
+      }
+    } catch {}                             // a canvas/File hiccup must never break the winner screen
+    finally { shareBusy = false; }
+  };
+
   $('reset-btn').onclick = () => {
     if (confirm('Reset everything and start over?')) {
       game = null;
@@ -2322,6 +2353,174 @@
     });
   }
 
+  // ---------- SHARE CARD ----------
+  // Phase 4.2 (DESIGN.md §8.2): renderShareCard(results) paints the winner screen's
+  // getResults() view-model — and NOTHING else: superlative names resolve via
+  // results.rows, never nameOf()/game, so the Phase 4.3 team rows will render here
+  // generically — onto an OFFSCREEN 1080x1350 canvas in the game's neo-brutalist
+  // language (flat panels, thick ink borders, hard offset shadows, the five-stop
+  // gradient). The canvas IS the whole asset pipeline (hard invariant 1): no new
+  // files, no fetched fonts — Comic Sans falls back to the device's bold system-ui.
+  // Every glyph paints through a try/catch'd helper, so a tofu emoji on an exotic
+  // device costs a decoration, never the card. Long names measure-and-ellipsize.
+  // Pure draw code: no DOM insertion, no timers, no state.
+  const SHARE_URL = 'elliotmattingly.github.io/gonuts';
+
+  function renderShareCard(results) {
+    const W = 1080, H = 1350, PAD = 72;
+    const INK = '#1a1a2e', PAPER = '#fffaf0', GOLD = '#ffeb3b', PURPLE = '#8338ec';
+    const FONT = "'Comic Sans MS', 'Chalkboard SE', system-ui, sans-serif";
+    const card = document.createElement('canvas');
+    card.width = W; card.height = H;
+    const d = card.getContext('2d');
+    const font = (px) => `bold ${Math.round(px)}px ${FONT}`;
+
+    const rr = (x, y, w, h, r) => {        // manual rounded-rect path (ctx.roundRect is too new for older devices)
+      r = Math.min(r, w / 2, h / 2);
+      d.beginPath();
+      d.moveTo(x + r, y);
+      d.arcTo(x + w, y, x + w, y + h, r);
+      d.arcTo(x + w, y + h, x, y + h, r);
+      d.arcTo(x, y + h, x, y, r);
+      d.arcTo(x, y, x + w, y, r);
+      d.closePath();
+    };
+    const panel = (x, y, w, h, { r = 34, off = 10, stroke = 7, fill = PAPER } = {}) => {
+      d.fillStyle = INK; rr(x + off, y + off, w, h, r); d.fill();   // hard shadow — never a blur
+      d.fillStyle = fill; rr(x, y, w, h, r); d.fill();
+      d.lineWidth = stroke; d.strokeStyle = INK; rr(x, y, w, h, r); d.stroke();
+    };
+    const ellipsize = (t, maxW) => {       // measures with the CURRENT d.font
+      if (d.measureText(t).width <= maxW) return t;
+      let s = t;
+      while (s.length > 1 && d.measureText(s.trimEnd() + '…').width > maxW) s = s.slice(0, -1);
+      return s.trimEnd() + '…';
+    };
+    const text = (t, x, y, px, { fill = PAPER, shadow = 0, stroke = 0, align = 'center', maxW = 0, angle = 0 } = {}) => {
+      d.save();
+      try {
+        d.font = font(px); d.textAlign = align; d.textBaseline = 'middle';
+        if (maxW) t = ellipsize(t, maxW);
+        if (angle) { d.translate(x, y); d.rotate(angle * Math.PI / 180); x = y = 0; }
+        if (shadow) {
+          d.fillStyle = INK;
+          // Color-emoji glyphs ignore fillStyle, which would print a ghost duplicate —
+          // brightness(0) turns the whole shadow pass ink. Progressive: engines without
+          // canvas filters ignore the assignment and just draw the plain offset pass.
+          d.filter = 'brightness(0)';
+          d.fillText(t, x + shadow, y + shadow);
+          d.filter = 'none';
+        }
+        if (stroke) {                      // ink outline (sticker look) — keeps gold legible on the amber band
+          d.lineWidth = stroke; d.strokeStyle = INK; d.lineJoin = 'round';
+          d.strokeText(t, x, y);
+        }
+        d.fillStyle = fill; d.fillText(t, x, y);
+      } catch {}
+      d.restore();
+    };
+    const fitPx = (t, px, minPx, maxW) => {          // shrink-to-fit; ellipsize catches what's left
+      d.font = font(px);
+      while (px > minPx && d.measureText(t).width > maxW) { px -= 4; d.font = font(px); }
+      return px;
+    };
+
+    // Backdrop: the app's five-stop gradient + a seeded confetti sprinkle (mulberry32:
+    // identical pixels on every render — cheap festivity, screenshot-diff friendly).
+    const bg = d.createLinearGradient(0, 0, W, H);
+    ['#ff006e', '#fb5607', '#ffbe0b', '#8338ec', '#3a86ff'].forEach((col, i) => bg.addColorStop(i / 4, col));
+    d.fillStyle = bg; d.fillRect(0, 0, W, H);
+    const rnd = mulberry32(7);
+    const colors = ['#ff006e', '#fb5607', '#ffbe0b', '#8338ec', '#3a86ff', '#00e676', '#ffeb3b'];
+    for (let i = 0; i < 80; i++) {
+      d.save();
+      d.translate(rnd() * W, rnd() * H);
+      d.rotate(rnd() * Math.PI * 2);
+      d.globalAlpha = 0.3;
+      d.fillStyle = colors[Math.floor(rnd() * colors.length)];
+      const s = 8 + rnd() * 16;
+      d.fillRect(-s / 2, -s / 2, s, s * 0.6);
+      d.restore();
+    }
+
+    // Header: wobbly title, crown, winner name(s), star line — the winner screen's stack.
+    text('GO NUTS!', W / 2, 128, 126, { shadow: 9, angle: -3 });
+    text('👑', W / 2, 268, 116);
+    text(results.coWinners ? 'CO-CRAZIEST OF THEM ALL' : 'CRAZIEST OF THEM ALL', W / 2, 370, 38, { shadow: 4 });
+    const names = results.winners.map(w => w.name).join(' & ');
+    const namePx = fitPx(names, 96, 48, W - PAD * 2);
+    text(names, W / 2, 447, namePx, { fill: GOLD, shadow: 7, stroke: Math.max(4, Math.round(namePx * 0.09)),
+                                      maxW: W - PAD * 2, angle: -2 });
+    const w0 = results.winners[0];
+    text(`${w0.total} ⭐  ·  avg ${w0.avg.toFixed(1)}`, W / 2, 534, 44, { shadow: 4 });
+
+    // Vertical budget: the footer line is fixed; superlative pills bid for their space;
+    // the scoreboard panel takes the rest — shrinking row height first, then trading
+    // pills away (a full scoreboard beats a third pill), and only as a last resort
+    // truncating rows behind a "+N more" line. Nothing can overlap by construction.
+    const top = 592, bottom = H - 96;                // the content band between header and footer
+    const headH = 84, padB = 26, pillH = 96, pillGap = 16, pillLead = 24;
+    const sups = results.superlatives.slice(0, 3);
+    let rows = results.rows, more = 0, rowH = 0;
+    for (;;) {
+      const supsH = sups.length ? pillLead + sups.length * pillH + (sups.length - 1) * pillGap : 0;
+      const rowArea = (bottom - top) - supsH - headH - padB;
+      rowH = rows.length <= 4 ? 84 : 62;
+      if (rowH * rows.length > rowArea) rowH = Math.max(44, Math.floor(rowArea / rows.length));
+      if (rowH * rows.length <= rowArea) break;      // everything fits
+      if (sups.length) { sups.pop(); continue; }     // trade a pill for scoreboard rows
+      const fit = Math.max(2, Math.floor(rowArea / rowH));
+      more = rows.length - (fit - 1);
+      rows = rows.slice(0, fit - 1);
+      break;
+    }
+    const supsH = sups.length ? pillLead + sups.length * pillH + (sups.length - 1) * pillGap : 0;
+    const panelH = headH + (rows.length + (more ? 1 : 0)) * rowH + padB;
+    let y = top + Math.max(0, (bottom - top - panelH - supsH) / 2);   // small games: center the block
+
+    // Ranked scoreboard: rank + name left, stars right; champion row(s) get a gold strip.
+    panel(PAD, y, W - PAD * 2, panelH);
+    text('🏆 FINAL SCORES', W / 2, y + headH / 2 + 8, 40, { fill: INK });
+    const inX = PAD + 44, inR = W - PAD - 44, inW = inR - inX;
+    let ry = y + headH + rowH / 2;
+    rows.forEach((r, i) => {
+      if (results.winners.some(w => w.id === r.id)) {
+        d.fillStyle = GOLD; rr(PAD + 20, ry - rowH / 2 + 4, W - PAD * 2 - 40, rowH - 8, 14); d.fill();
+        d.lineWidth = 3; d.strokeStyle = INK; d.stroke();
+      }
+      const px = Math.min(40, Math.round(rowH * 0.58));
+      d.font = font(px);
+      const starsTxt = `${r.total} ⭐`;
+      const starsW = d.measureText(starsTxt).width;
+      text(`${i + 1}. ${r.name}`, inX, ry, px, { fill: INK, align: 'left', maxW: inW - starsW - 24 });
+      text(starsTxt, inR, ry, px, { fill: INK, align: 'right' });
+      ry += rowH;
+    });
+    if (more) text(`…and ${more} more went nuts`, W / 2, ry, Math.min(34, Math.round(rowH * 0.5)), { fill: INK });
+    y += panelH + pillLead;
+
+    // Superlative pills (>= 3 players): title in the app's purple, names in ink,
+    // detail line below — names resolve via results.rows only.
+    const nameById = new Map(results.rows.map(r => [r.id, r.name]));
+    for (const s of sups) {
+      panel(PAD, y, W - PAD * 2, pillH, { r: 26, off: 7, stroke: 5 });
+      const who = s.playerIds.map(id => nameById.get(id) ?? '?').join(' & ');
+      d.font = font(30);
+      const lead = `${s.title}: `;
+      const leadW = d.measureText(lead).width;
+      const whoTxt = ellipsize(who, (W - PAD * 2) - 80 - leadW);
+      const x0 = W / 2 - (leadW + d.measureText(whoTxt).width) / 2;
+      text(lead, x0, y + 36, 30, { fill: PURPLE, align: 'left' });
+      text(whoTxt, x0 + leadW, y + 36, 30, { fill: INK, align: 'left' });
+      text(s.detail, W / 2, y + 70, 24, { fill: '#43435a', maxW: W - PAD * 2 - 80 });
+      y += pillH + pillGap;
+    }
+
+    // Footer: where to find the game.
+    text(`🥜 ${SHARE_URL} 🥜`, W / 2, H - 56, 34, { shadow: 3 });
+    return card;
+  }
+
   // ---------- SW REGISTRATION + BOOT ----------
   // SW (DESIGN.md §9): network-first shell cache, registered only on https — skipped under
   // TEST and on file://, both of which keep working exactly as today. Registration failure
@@ -2350,7 +2549,8 @@
   }
   transition('setup');                     // boot always lands on setup (machine.state null → always legal)
   if (TEST) window.__gonuts = { machine, timers, transition, getGame: () => game, settings, CONFIG,
-                                getConfetti: () => confetti };   // particle peek for the G-UX8 scenario
+                                getConfetti: () => confetti,     // particle peek for the G-UX8 scenario
+                                getResults, renderShareCard };   // share-card peek for S16 (Phase 4.2)
 })();
 </script>
 </body>
