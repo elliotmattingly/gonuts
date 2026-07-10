@@ -122,6 +122,16 @@ scenario('S1 happy path: totals/avgs/ranking derived correctly', async ({ page, 
   assert.strictEqual(await text(page, '#winner-score'), `${winners[0].total} ⭐ (avg ${winners[0].avg.toFixed(1)})`);
   const lis = await page.$$eval('#final-scores li', els => els.map(el => el.textContent.trim()));
   assert.deepStrictEqual(lis, rows.map(r => `${r.name} — ${r.total} ⭐ (avg ${r.avg.toFixed(1)})`));
+
+  // Phase 3.6: with 3 players the superlative pills render under the final scoreboard
+  // (S1's script always produces all three: a unique best turn, at least one 5⭐, raters).
+  assert.ok(await page.$eval('#superlatives', el => !el.hidden), 'superlatives visible with 3 players');
+  const sups = await page.$$eval('#superlatives .sup-row', els => els.map(el => el.textContent.trim()));
+  assert.strictEqual(sups.length, 3, `expected 3 superlative rows, got ${sups.length}: ${JSON.stringify(sups)}`);
+  const bestIdx = ratingsByTurn.findIndex(r => r.reduce((a, b) => a + b, 0) === 9);   // 9⭐ is S1's best single turn
+  const bananas = sups.find(s => s.includes('Most Bananas Moment'));
+  assert.ok(bananas && bananas.includes(orderedNames[bestIdx]) && bananas.includes('9 ⭐'),
+    `bananas award names the 9⭐ performer with the haul (got "${bananas}")`);
 });
 
 // S2 — R1 regression: Reset during the 3-2-1 countdown (confirm auto-accepted) must
@@ -224,16 +234,85 @@ scenario('S5 reload mid-rating: resume rewinds to pass, discard keeps roster', a
   assert.deepStrictEqual(roster, ['Ann', 'Ben'], 'discard keeps the roster');
 });
 
-// S6 — Tie (Phase 1 form): a symmetric 2-player game renders co-winners, never sorted[0].
-scenario('S6 tie renders co-winners', async ({ page, base }) => {
+// S6 — Ties (Phase 3 form): a PARTIAL top tie goes to sudden death — the nutoff screen
+// announces the contenders, the shorter NUT-OFF turns are rated by non-contenders only,
+// and the nutoffOnly totals crown a unique winner. An ALL-player tie (here: 2 players)
+// has no neutral raters, so it still renders the Phase 1 co-winner form.
+scenario('S6 partial tie → NUT-OFF resolves one winner; 2-player tie → co-winners', async ({ page, base }) => {
+  // ---- Part A: 3 players, two tied at the top → NUT-OFF ----
+  await page.goto(base + Q);
+  await startGame(page, ['Ann', 'Ben', 'Cai']);
+  const orderedNames = await page.evaluate(() => {
+    const g = window.__gonuts.getGame();
+    return g.order.map(id => g.players.find(p => p.id === id).name);
+  });
+  // By seeded turn position: performers 1+2 total 5 each; performer 3 totals 2.
+  for (const ratings of [[3, 2], [4, 1], [1, 1]]) await playTurn(page, ratings);
+
+  await page.waitForSelector('#nutoff-screen.active');
+  assert.strictEqual(await state(page), 'nutoff');
+  assert.ok((await text(page, '#nutoff-title')).includes("IT'S A NUT-OFF!"));
+  const contenders = orderedNames.slice(0, 2), neutral = orderedNames[2];
+  const namesLine = await text(page, '#nutoff-names');
+  assert.ok(contenders.every(n => namesLine.includes(n)), `contenders on screen (got "${namesLine}")`);
+  assert.ok(!namesLine.includes(neutral), 'the non-contender never appears on the nutoff screen');
+  const tb = await page.evaluate(() => window.__gonuts.getGame().tiebreak);
+  assert.strictEqual(tb.turnIdx, 0, 'tiebreak armed at its first turn');
+  assert.deepStrictEqual([...tb.order].sort(), [...tb.contenders].sort(), 'tiebreak order is a shuffle of the contenders');
+
+  await page.click('#nutoff-btn');
+  await page.waitForSelector('#intro-screen.active');
+  assert.ok(await page.$eval('#intro-nutoff', el => !el.hidden), 'intro shows the NUT-OFF banner during the tiebreak');
+  const nutoffNames = await page.evaluate(() => {
+    const g = window.__gonuts.getGame();
+    return g.tiebreak.order.map(id => g.players.find(p => p.id === id).name);
+  });
+  // Sudden-death turns: only the neutral player rates (1 rater each). 5 then 3 → unique winner.
+  await playTurn(page, [5]);
+  await page.waitForSelector('#intro-screen.active');
+  await playTurn(page, [3]);
+
+  await page.waitForSelector('#winner-screen.active');
+  assert.strictEqual(await text(page, '#winner-subtitle'), 'CRAZIEST OF THEM ALL');
+  assert.strictEqual(await text(page, '#winner-name'), nutoffNames[0], 'the nutoffOnly totals crown the 5⭐ contender');
+  assert.strictEqual(await text(page, '#winner-score'), '5 ⭐ (avg 2.5)',
+    'the crown shows the honest MAIN total — nutoff stars never pollute the championship totals');
+  const gA = await page.evaluate(() => window.__gonuts.getGame());
+  const nutoffTurns = gA.turns.filter(t => t.nutoff);
+  assert.strictEqual(nutoffTurns.length, 2, 'both sudden-death turns logged nutoff:true');
+  assert.ok(nutoffTurns.every(t => Object.keys(t.ratings).length === 1),
+    'nutoff turns are rated by the single non-contender only');
+  // Hall of Fame (3.7): exactly one entry, flagged hadNutoff, naming the resolved winner.
+  let hof = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.hof')));
+  assert.strictEqual(hof.entries.length, 1);
+  assert.deepStrictEqual(hof.entries[0].winners, [nutoffNames[0]]);
+  assert.strictEqual(hof.entries[0].hadNutoff, true);
+  assert.strictEqual(hof.entries[0].stars, 5);
+
+  // Refresh on the winner screen: hofRecorded must block a double append, and the
+  // resumed screen must re-resolve the same nutoff winner.
+  await page.reload();
+  await page.waitForSelector('#resume-banner:not([hidden])');
+  await page.click('#resume-btn');
+  await page.waitForSelector('#winner-screen.active');
+  assert.strictEqual(await text(page, '#winner-name'), nutoffNames[0], 'resume re-resolves the same nutoff winner');
+  hof = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.hof')));
+  assert.strictEqual(hof.entries.length, 1, 'a winner-screen refresh never double-writes the HOF');
+
+  // ---- Part B: a 2-player dead tie (ALL players tied → no neutral raters) ----
+  await page.evaluate(() => localStorage.clear());
   await page.goto(base + Q);
   await startGame(page, ['Ann', 'Ben']);
-  await playTurn(page, [3]);                      // Ben gives Ann 3
+  await playTurn(page, [3]);
   await page.waitForSelector('#intro-screen.active');
-  await playTurn(page, [3]);                      // Ann gives Ben 3 — dead tie
+  await playTurn(page, [3]);                      // dead tie
   await page.waitForSelector('#winner-screen.active');
   assert.strictEqual(await text(page, '#winner-subtitle'), 'CO-CRAZIEST OF THEM ALL');
   assert.strictEqual(await text(page, '#winner-name'), 'Ann & Ben');
+  assert.ok(await page.$eval('#superlatives', el => el.hidden), 'superlatives stay hidden below 3 players');
+  const hofB = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.hof')));
+  assert.deepStrictEqual(hofB.entries[0].winners, ['Ann', 'Ben'], 'co-winners both enter the HOF');
+  assert.strictEqual(hofB.entries[0].hadNutoff, false);
 
   // Reload on the winner screen: the banner must say the game FINISHED (no bogus
   // "in progress"/"? up next"), and Resume must re-show the winner screen.
@@ -246,6 +325,23 @@ scenario('S6 tie renders co-winners', async ({ page, base }) => {
   await page.click('#resume-btn');
   await page.waitForSelector('#winner-screen.active');
   assert.strictEqual(await text(page, '#winner-name'), 'Ann & Ben');
+
+  // ---- Hall of Fame toggle on setup (3.7) + "clear history" in the settings sheet ----
+  await page.click('#new-game-btn');
+  await page.waitForSelector('#setup-screen.active');
+  await page.click('#hof-btn');
+  await page.waitForSelector('#hof-panel:not([hidden])');
+  const hofRows = await page.$$eval('#hof-list li', els => els.map(el => el.textContent.trim()));
+  assert.strictEqual(hofRows.length, 1);
+  assert.ok(hofRows[0].includes('Ann & Ben') && hofRows[0].includes('3 ⭐'), `unexpected HOF row: ${hofRows[0]}`);
+  await page.click('#settings-btn');
+  await page.waitForSelector('#settings-sheet:not([hidden])');
+  await page.click('#sheet-clear-hof');           // confirm() auto-accepted by the dialog handler
+  await page.click('#sheet-close');
+  assert.strictEqual(await page.evaluate(() => localStorage.getItem('gonuts.hof')), null,
+    'clear history wipes gonuts.hof');
+  assert.strictEqual(await page.$$eval('#hof-list li', els => els.length), 0, 'the open HOF list re-renders empty');
+  assert.ok(await page.$eval('#hof-empty', el => !el.hidden), 'the empty message shows after clearing');
 });
 
 // S7 — Duplicate/empty name feedback: visible message, roster unchanged.
@@ -382,9 +478,9 @@ scenario('G-UX8 five-star tap fires an origin micro-burst with 🥜 glyphs', asy
 // S9 — Illegal-transition fuzz: every from→to edge NOT in the state table must be a
 // guarded no-op (returns false, state unchanged).
 scenario('S9 illegal transitions are all blocked', async ({ page, base }) => {
-  // Mirror of the STATES table (DESIGN.md §2; pass/roundEnd rows + widened edges from
-  // Phase 3.4/3.5). A drift between this copy and the page's table surfaces as a fuzz
-  // failure — that is intentional: any commit that touches the table must update this
+  // Mirror of the STATES table (DESIGN.md §2; pass/roundEnd/nutoff rows + widened edges
+  // from Phase 3.3/3.4/3.5). A drift between this copy and the page's table surfaces as a
+  // fuzz failure — that is intentional: any commit that touches the table must update this
   // mirror too.
   const TABLE = {
     setup:      ['intro'],
@@ -392,8 +488,9 @@ scenario('S9 illegal transitions are all blocked', async ({ page, base }) => {
     countdown:  ['performing', 'setup'],
     performing: ['pass', 'rating', 'setup'],
     pass:       ['rating', 'setup'],
-    rating:     ['rating', 'pass', 'intro', 'roundEnd', 'winner', 'setup'],
+    rating:     ['rating', 'pass', 'intro', 'roundEnd', 'nutoff', 'winner', 'setup'],
     roundEnd:   ['intro', 'setup'],
+    nutoff:     ['intro', 'setup'],
     winner:     ['intro', 'setup'],
   };
   await page.goto(base + Q);

@@ -282,8 +282,28 @@
   }
   #roundend-screen .scoreboard { margin-top: 16px; }
 
-  /* Multi-round intro tag (Phase 3.5): shows only when the game plays >1 round */
-  #intro-round { margin-bottom: 8px; font-weight: bold; }
+  /* NUT-OFF (Phase 3.3): the sudden-death tie announcement. A compact centered action
+     screen (no panel) like pass-screen, so the mascot's corner stays clear — no reserve
+     padding needed and no bow-out list entry. */
+  .nutoff-title {
+    font-size: clamp(30px, 8vw, 60px);
+    color: #ffeb3b;
+    text-shadow: 4px 4px 0 var(--ink);
+    margin: 6px 0 0;
+    transform: rotate(-2deg);
+  }
+  #nutoff-names {
+    font-size: clamp(26px, 7vw, 48px);
+    font-weight: bold;
+    color: var(--paper);
+    text-shadow: 3px 3px 0 var(--ink);
+    margin: 8px 0 2px;
+    overflow-wrap: anywhere;   /* two max-length names + " vs " always wrap, never clip */
+  }
+
+  /* Multi-round intro tag (Phase 3.5) + NUT-OFF banner (3.3): pills above the intro name */
+  #intro-round, #intro-nutoff { margin-bottom: 8px; font-weight: bold; }
+  #intro-nutoff { background: var(--bg2); }
 
   /* RATING SCREEN */
   .rating-title {
@@ -355,6 +375,42 @@
   .scoreboard h3 { margin: 0 0 10px; font-size: 22px; }
   .scoreboard ol { padding-left: 28px; margin: 0; text-align: left; }
   .scoreboard li { font-size: 20px; padding: 4px 0; font-weight: bold; }
+
+  /* Crew callout (Phase 3.7): the "Nth title" line under the winner's score */
+  #crew-line {
+    font-size: clamp(16px, 3.5vw, 24px);
+    color: var(--paper);
+    text-shadow: 2px 2px 0 var(--ink);
+    font-weight: bold;
+    margin-top: 8px;
+  }
+
+  /* Superlatives (Phase 3.6): pill rows under the final scoreboard */
+  #superlatives {
+    margin-top: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+    max-width: min(92vw, 460px); width: 100%;
+  }
+  #superlatives[hidden] { display: none; }   /* the flex display would beat the hidden attr */
+  .sup-row {
+    background: rgba(255, 250, 240, 0.92);
+    border: 3px solid var(--ink);
+    border-radius: 22px;
+    padding: 8px 18px;
+    box-shadow: 4px 4px 0 var(--ink);
+    font-size: 15px;
+    line-height: 1.35;
+  }
+  .sup-row .sup-title { color: var(--bg4); }
+  .sup-row .sup-detail { opacity: 0.8; font-size: 13px; }
+
+  /* HALL OF FAME (Phase 3.7): a setup-screen toggle listing gonuts.hof entries */
+  #hof-btn { font-size: 17px; padding: 10px 22px; box-shadow: 4px 4px 0 var(--ink); }
+  #hof-panel { margin-top: 4px; }
+  #hof-panel h3 { margin: 0 0 8px; font-size: 20px; }
+  #hof-panel ol { padding-left: 24px; margin: 0; text-align: left; }
+  #hof-panel li { font-size: 16px; font-weight: bold; padding: 3px 0; }
+  #hof-panel li .small { font-weight: normal; display: block; }
 
   /* SETUP FEEDBACK */
   @keyframes shake {
@@ -438,6 +494,7 @@
   body[data-state="pass"] #pose-watch,        /* Phase 3 state — wired ahead of time */
   body[data-state="rating"] #pose-watch,
   body[data-state="roundEnd"] #pose-idle,     /* between rounds: neutral cheer next to the scoreboard */
+  body[data-state="nutoff"] #pose-hype,       /* sudden death announced: maximum hype (Phase 3.3) */
   body[data-state="winner"] #pose-crown { display: inline; }
   /* Crowded viewports: when the active screen's content (measured WITH the reserve in
      place) can't fit the viewport, its panels would scroll over the corner and reduce
@@ -552,10 +609,18 @@
     <button id="start-btn" class="go" disabled>START!</button>
     <div class="small">Add at least 2 players</div>
   </div>
+  <!-- HALL OF FAME (Phase 3.7): pure DOM toggle listing gonuts.hof entries -->
+  <button id="hof-btn" aria-expanded="false">🏆 Hall of Fame</button>
+  <div class="panel" id="hof-panel" hidden>
+    <h3>🏆 Hall of Fame</h3>
+    <ol id="hof-list"></ol>
+    <div class="small" id="hof-empty">No champions yet — go nuts!</div>
+  </div>
 </section>
 
 <!-- TURN INTRO -->
 <section id="intro-screen" class="screen">
+  <div class="pill" id="intro-nutoff" hidden>🥜 NUT-OFF — sudden death!</div>
   <div class="pill" id="intro-round" hidden>Round 1 of 2</div>
   <div class="now-up">Next up...</div>
   <h2 class="name" id="intro-name" tabindex="-1">—</h2>
@@ -623,16 +688,26 @@
   <button id="next-round-btn" class="go">Round 2!</button>
 </section>
 
+<!-- NUT-OFF (Phase 3.3: sudden-death tie announcement — owns no timers; its button is the only exit) -->
+<section id="nutoff-screen" class="screen">
+  <h2 class="nutoff-title" id="nutoff-title" tabindex="-1">🥜 IT'S A NUT-OFF! 🥜</h2>
+  <div id="nutoff-names">—</div>
+  <div class="subtitle">Dead tie! Shorter turns — the rest of the crew decides.</div>
+  <button id="nutoff-btn" class="go">BREAK THE TIE!</button>
+</section>
+
 <!-- WINNER -->
 <section id="winner-screen" class="screen">
   <div class="crown">👑</div>
   <div class="subtitle" id="winner-subtitle">CRAZIEST OF THEM ALL</div>
   <h2 class="winner-name" id="winner-name" tabindex="-1">—</h2>
   <div class="winner-score" id="winner-score">— stars</div>
+  <div id="crew-line" hidden>—</div>
   <div class="scoreboard">
     <h3>🏆 Final Scores</h3>
     <ol id="final-scores"></ol>
   </div>
+  <div id="superlatives" hidden></div>
   <div class="row" style="margin-top:20px;">
     <button id="play-again-btn" class="primary">Play Again (Same Crew)</button>
     <button id="new-game-btn">New Game</button>
@@ -758,6 +833,7 @@
     <div class="sheet-hint">Pickers apply to the next game.</div>
     <button id="sheet-sound" class="sheet-toggle" aria-pressed="true">🔊 Sound: On</button>
     <button id="sheet-haptics" class="sheet-toggle" aria-pressed="true">📳 Haptics: On</button>
+    <button id="sheet-clear-hof" class="sheet-toggle danger">🗑️ Clear Hall of Fame</button>
     <button id="sheet-close" class="sheet-toggle primary">Done</button>
   </div>
 </div>
@@ -1172,7 +1248,8 @@
     return game?.players.find(p => p.id === id)?.name ?? '?';
   }
 
-  function getRaterIds(g, performerId) {   // Phase 1: everyone but the performer; P3 NUT-OFF: non-contenders; P4: non-teammates
+  function getRaterIds(g, performerId) {   // NUT-OFF (3.3): non-contenders only — tied players never rate each other; P4: non-teammates
+    if (g.tiebreak) return g.players.map(p => p.id).filter(id => !g.tiebreak.contenders.includes(id));
     return g.players.map(p => p.id).filter(id => id !== performerId);
   }
 
@@ -1204,13 +1281,66 @@
     return g.players.map(p => p.id).filter(id => totals.get(id).total === max);
   }
 
+  function computeSuperlatives(g) {        // Phase 3.6 — fun awards mined from the raw log; intra-award ties all listed
+    if (g.players.length < 3) return [];   // with 2 players every award is a foregone conclusion
+    const out = [];
+    const tiedAt = (map, best) => [...map.keys()].filter(id => Math.abs(map.get(id) - best) < 1e-9);
+
+    // 🍌 Most Bananas Moment: the highest single-turn star haul, with the prompt that caused it.
+    let best = 0, bestTurns = [];
+    for (const t of g.turns) {
+      const s = starsFor(t);
+      if (s > best) { best = s; bestTurns = [t]; }
+      else if (s === best && s > 0) bestTurns.push(t);
+    }
+    if (bestTurns.length) {
+      const ids = [...new Set(bestTurns.map(t => t.performerId))];
+      const prompts = [...new Set(bestTurns.map(t => t.promptIdx).filter(i => i != null).map(promptText))];
+      out.push({ title: '🍌 Most Bananas Moment', playerIds: ids,
+                 detail: `${best} ⭐ in one turn${prompts.length ? ` — going nuts like ${prompts.join(' & ')}` : ''}` });
+    }
+
+    // 🌟 Crowd Favorite: the most 5⭐ ratings received.
+    const fives = new Map(g.players.map(p => [p.id, 0]));
+    for (const t of g.turns) for (const s of Object.values(t.ratings)) {
+      if (s === 5 && fives.has(t.performerId)) fives.set(t.performerId, fives.get(t.performerId) + 1);
+    }
+    const maxFives = Math.max(...fives.values());
+    if (maxFives > 0) {
+      out.push({ title: '🌟 Crowd Favorite', playerIds: tiedAt(fives, maxFives),
+                 detail: `${maxFives} × 5⭐ ratings received` });
+    }
+
+    // 💝 Most Generous Rater: the highest average handed out (from the ratings KEYS — the raters).
+    const given = new Map(g.players.map(p => [p.id, { sum: 0, n: 0 }]));
+    for (const t of g.turns) for (const [rid, s] of Object.entries(t.ratings)) {
+      const r = given.get(rid);
+      if (r) { r.sum += s; r.n++; }
+    }
+    const avgs = new Map([...given].filter(([, r]) => r.n).map(([id, r]) => [id, r.sum / r.n]));
+    if (avgs.size) {
+      const maxAvg = Math.max(...avgs.values());
+      out.push({ title: '💝 Most Generous Rater', playerIds: tiedAt(avgs, maxAvg),
+                 detail: `${maxAvg.toFixed(1)} ⭐ average given` });
+    }
+    return out;
+  }
+
   function getResults(g) {                 // view-model for the winner screen, scoreboards, HOF, share card
     const totals = totalsFor(g);
     const rows = g.players
       .map(p => ({ id: p.id, name: p.name, ...totals.get(p.id) }))
       .sort((a, b) => b.total - a.total);
-    const winners = computeWinners(g).map(id => rows.find(r => r.id === id));
-    return { winners, rows, superlatives: [], coWinners: winners.length > 1 };
+    // NUT-OFF resolution (3.3): the sudden-death turns decide the crown, but the rows keep
+    // the honest championship totals (totalsFor's default already excludes nutoff turns).
+    let winnerIds = computeWinners(g);
+    if (g.tiebreak) {
+      const nutoff = totalsFor(g, { nutoffOnly: true });
+      const max = Math.max(...g.tiebreak.contenders.map(id => nutoff.get(id).total));
+      winnerIds = g.tiebreak.contenders.filter(id => nutoff.get(id).total === max);  // still tied → co-winners
+    }
+    const winners = winnerIds.map(id => rows.find(r => r.id === id));
+    return { winners, rows, superlatives: computeSuperlatives(g), coWinners: winners.length > 1 };
   }
 
   function hasPrivateRating() {            // Phase 3.4: every rating rides the pass-the-phone interstitial
@@ -1228,13 +1358,20 @@
   function advance() {                     // the single flow router — called after each recorded rating
     const g = game;
     if (g.raterQueue.length) return transition(hasPrivateRating() ? 'pass' : 'rating');
-    // Phase 3: tiebreak (NUT-OFF) turn stepping rides here.
+    if (g.tiebreak) {                      // NUT-OFF (3.3): sudden-death turns step through tiebreak.order
+      g.tiebreak.turnIdx++;
+      if (g.tiebreak.turnIdx < g.tiebreak.order.length) return transition('intro');
+      return transition('winner');         // enterWinner resolves via the nutoffOnly totals
+    }
     g.turnIdx++;
     if (g.turnIdx < g.order.length) return transition('intro');
     if (g.round < g.settings.rounds) return transition('roundEnd');   // Phase 3.5: more rounds to play
-    // Phase 3: NUT-OFF tie routing rides here; meanwhile ties render as co-winners
-    // directly in enterWinner via getResults().coWinners.
-    return transition('winner');
+    const winners = computeWinners(g);
+    // A partial top tie goes to sudden death (3.3). A unique winner — or an ALL-player
+    // tie, which leaves no neutral raters (including every 2-player tie) — goes straight
+    // to the crown; enterWinner celebrates the latter as co-winners.
+    if (winners.length === 1 || winners.length === g.players.length) return transition('winner');
+    return transition('nutoff', { contenders: winners });
   }
 
   // ---------- MACHINE ----------
@@ -1245,8 +1382,9 @@
     countdown:  { screen: 'countdown', to: ['performing', 'setup'],                enter: enterCountdown,  resume: 'intro' },
     performing: { screen: 'timer',     to: ['pass', 'rating', 'setup'],            enter: enterPerforming, resume: 'intro' },
     pass:       { screen: 'pass',      to: ['rating', 'setup'],                    enter: enterPass },
-    rating:     { screen: 'rating',    to: ['rating', 'pass', 'intro', 'roundEnd', 'winner', 'setup'], enter: enterRating, resume: 'pass' },
+    rating:     { screen: 'rating',    to: ['rating', 'pass', 'intro', 'roundEnd', 'nutoff', 'winner', 'setup'], enter: enterRating, resume: 'pass' },
     roundEnd:   { screen: 'roundend',  to: ['intro', 'setup'],                     enter: enterRoundEnd },
+    nutoff:     { screen: 'nutoff',    to: ['intro', 'setup'],                     enter: enterNutoff },
     winner:     { screen: 'winner',    to: ['intro', 'setup'],                     enter: enterWinner },
   };
   const machine = { state: null };         // null = boot; transitions from boot are always legal (resume targets)
@@ -1338,6 +1476,25 @@
   function enterSetup() {
     renderResumeBanner();
     renderPlayers();
+    if (!$('hof-panel').hidden) renderHofList();   // an open list refreshes (e.g. back from a finished game)
+  }
+
+  function renderHofList() {               // Hall of Fame list (3.7) — re-rendered from storage on demand
+    const entries = loadHof().entries;
+    $('hof-empty').hidden = entries.length > 0;
+    const ol = $('hof-list');
+    ol.innerHTML = '';
+    for (const e of entries) {
+      const li = document.createElement('li');
+      li.textContent = `${e.winners.join(' & ')} — ${e.stars} ⭐`;
+      const sub = document.createElement('span');
+      sub.className = 'small';
+      sub.textContent = `${e.players.length} players · ${e.rounds} round${e.rounds === 1 ? '' : 's'}`
+        + (e.hadNutoff ? ' · 🥜 nut-off' : '')
+        + ` · ${new Date(e.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+      li.appendChild(sub);
+      ol.appendChild(li);
+    }
   }
 
   // -- intro --
@@ -1346,7 +1503,9 @@
     if (!p) return transition('setup');
     $('intro-name').textContent = p.name;
     $('intro-secs').textContent = turnSecondsForCurrentTurn();
-    const multi = game.settings.rounds > 1;        // single-round games skip the tag (Phase 3.5)
+    const tiebreak = !!game.tiebreak;              // NUT-OFF banner replaces the round tag during sudden death (3.3)
+    $('intro-nutoff').hidden = !tiebreak;
+    const multi = !tiebreak && game.settings.rounds > 1;   // single-round games skip the tag (Phase 3.5)
     $('intro-round').hidden = !multi;
     if (multi) $('intro-round').textContent = `Round ${game.round} of ${game.settings.rounds}`;
     if (game.currentPromptIdx == null) drawPrompt();   // a resumed turn keeps its persisted prompt
@@ -1518,12 +1677,85 @@
     $('next-round-btn').textContent = `Round ${g.round + 1}!`;
   }
 
+  // -- nutoff (tie-breaker, Phase 3.3) --
+  // The announcement screen for a partial top tie. Entering it ARMS the tiebreak: from
+  // here on currentPerformerId() walks tiebreak.order, turnSecondsForCurrentTurn()
+  // shortens, getRaterIds() summons non-contenders only, and turns log nutoff:true.
+  // Resumable as itself: a resumed entry has an empty payload and reuses the persisted
+  // game.tiebreak (written by the saveGame() riding the first entry) untouched.
+  function enterNutoff({ contenders } = {}) {
+    const g = game;
+    if (!g || (!g.tiebreak && !contenders?.length)) return transition('setup');
+    if (!g.tiebreak) g.tiebreak = { contenders, order: shuffle(contenders), turnIdx: 0 };
+    $('nutoff-names').textContent = g.tiebreak.contenders.map(nameOf).join(' vs ');
+    audio.play('nutoff'); haptics.buzz([60, 40, 60, 40, 60]);
+  }
+
   // -- winner --
+  function ordinal(n) {                    // 1st / 2nd / 3rd / 4th … (11th-13th stay "th")
+    const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+
+  function renderSuperlatives(sups) {      // pill rows under the final scoreboard (Phase 3.6)
+    const wrap = $('superlatives');
+    wrap.innerHTML = '';
+    wrap.hidden = !sups.length;            // absent entirely below 3 players
+    for (const s of sups) {
+      const row = document.createElement('div');
+      row.className = 'sup-row';
+      const title = document.createElement('span');
+      title.className = 'sup-title';
+      title.textContent = `${s.title}: `;
+      const names = document.createElement('b');
+      names.textContent = s.playerIds.map(nameOf).join(' & ');   // intra-award ties all listed
+      const detail = document.createElement('div');
+      detail.className = 'sup-detail';
+      detail.textContent = s.detail;
+      row.append(title, names, detail);
+      wrap.appendChild(row);
+    }
+  }
+
+  // Hall of Fame (Phase 3.7): gonuts.hof rides its OWN key — a rating tap never rewrites
+  // it and Reset never clears it (DESIGN.md §4 table). Appended exactly once per finished
+  // game: hofRecorded rides the game snapshot, so a winner-screen refresh + Resume can't
+  // double-write. Returns the crew's title count for the callout line.
+  function loadHof() {
+    const hof = store.get(KEYS.hof);
+    return (hof?.v === 1 && Array.isArray(hof.entries)) ? hof : { v: 1, entries: [] };
+  }
+
+  function crewKeyOf(g) {                  // sorted lowercase names — identifies a crew across games
+    return g.players.map(p => p.name.toLowerCase()).sort().join('|');
+  }
+
+  function updateHof(res) {
+    const g = game;
+    const crewKey = crewKeyOf(g);
+    const hof = loadHof();
+    if (!g.hofRecorded) {
+      hof.entries.unshift({                // newest first, capped (DESIGN.md §7)
+        at: Date.now(), crewKey,
+        players: g.players.map(p => p.name),
+        winners: res.winners.map(w => w.name),
+        stars: res.winners[0].total,
+        rounds: g.settings.rounds,
+        hadNutoff: !!g.tiebreak,
+      });
+      hof.entries = hof.entries.slice(0, CONFIG.HOF_MAX_ENTRIES);
+      store.set(KEYS.hof, hof);
+      g.hofRecorded = true;                // persisted by the saveGame() riding this transition
+    }
+    return hof.entries.filter(e => e.crewKey === crewKey).length;
+  }
+
   function enterWinner() {
     if (!game) return transition('setup');
     const res = getResults(game);          // renders EXCLUSIVELY from getResults() (DESIGN.md §8)
-    // Co-winner stopgap (bug (c)/R5): ties are celebrated, never resolved by sorted[0].
-    // Phase 3 routes most ties to the NUT-OFF; this rendering stays as its fallback.
+    // Ties are celebrated, never resolved by sorted[0]: a partial tie was already routed
+    // to the NUT-OFF by advance(); the co-winner form covers a still-tied NUT-OFF and the
+    // all-player tie (no neutral raters — including every 2-player tie).
     $('winner-subtitle').textContent = res.coWinners ? 'CO-CRAZIEST OF THEM ALL' : 'CRAZIEST OF THEM ALL';
     $('winner-name').textContent = res.winners.map(w => w.name).join(' & ');
     const w = res.winners[0];
@@ -1535,6 +1767,10 @@
       li.textContent = `${r.name} — ${r.total} ⭐ (avg ${r.avg.toFixed(1)})`;
       ol.appendChild(li);
     });
+    renderSuperlatives(res.superlatives);
+    const titles = updateHof(res);         // append once (hofRecorded guard) + crew title count
+    $('crew-line').hidden = titles < 2;    // a first title is no streak — the callout starts at 2
+    if (titles >= 2) $('crew-line').textContent = `👑 ${ordinal(titles)} title for this crew!`;
     burstConfetti();
     audio.play('fanfare');
   }
@@ -1593,6 +1829,19 @@
     game.turnIdx = 0;
     game.order = shuffle(game.players.map(p => p.id));   // every round gets a fresh order (DESIGN.md §7)
     transition('intro');
+  };
+
+  // NUT-OFF kickoff (3.3): pure navigation — enterNutoff already armed game.tiebreak.
+  $('nutoff-btn').onclick = () => transition('intro');
+
+  // Hall of Fame toggle (3.7): pure DOM toggle on the setup screen — owns no timers,
+  // never navigates; the list re-renders from storage on every open.
+  $('hof-btn').onclick = () => {
+    const panel = $('hof-panel');
+    panel.hidden = !panel.hidden;
+    $('hof-btn').setAttribute('aria-expanded', String(!panel.hidden));
+    if (!panel.hidden) renderHofList();
+    syncMascot();                          // the list changes the setup screen's height
   };
 
   $('play-again-btn').onclick = () => {    // fresh game, same crew (order reshuffles from Phase 3)
@@ -1684,6 +1933,11 @@
   });
   $('sheet-sound').onclick = () => { setSetting('sound', !settings.sound); renderSoundControls(); };
   $('sheet-haptics').onclick = () => { setSetting('haptics', !settings.haptics); renderSoundControls(); };
+  $('sheet-clear-hof').onclick = () => {   // clear history (3.7): data op only — the sheet never navigates
+    if (!confirm('Clear the Hall of Fame?')) return;
+    store.del(KEYS.hof);
+    renderHofList();                       // sync the setup-screen list if it's open behind the sheet
+  };
 
   $('resume-btn').onclick = () => { if (pendingResume) resumeGame(pendingResume); };
 
