@@ -261,10 +261,11 @@ scenario('S7 duplicate/empty name gives feedback', async ({ page, base }) => {
   assert.strictEqual(await page.$$eval('#player-list li', els => els.length), 1);
 });
 
-// S8 — Settings persist (Phase 2 form): toggle sound off via the fixed #sound-btn,
-// reload, and the persisted gonuts.settings + the button's muted state must survive.
-// (Phase 3 extends this with the turn-length picker.)
-scenario('S8 sound/haptics toggles persist across reload', async ({ page, base }) => {
+// S8 — Settings persist: toggle sound off via the fixed #sound-btn (Phase 2), pick a
+// 30s turn length via the sheet's segmented picker (Phase 3.5), reload, and both the
+// persisted gonuts.settings AND the UI must survive — including a fresh game actually
+// USING the picked turn length.
+scenario('S8 sound/haptics + turn-length picks persist across reload', async ({ page, base }) => {
   await page.goto(base + Q);
   assert.strictEqual(await text(page, '#sound-btn'), '🔊');
   assert.strictEqual(await page.getAttribute('#sound-btn', 'aria-label'), 'Mute sound');
@@ -300,6 +301,47 @@ scenario('S8 sound/haptics toggles persist across reload', async ({ page, base }
   assert.strictEqual(stored.haptics, false, 'gonuts.settings persisted haptics:false');
   assert.strictEqual(await text(page, '#sound-btn'), '🔇', 'muted state survives reload');
   assert.strictEqual(await page.getAttribute('#sound-btn', 'aria-label'), 'Unmute sound');
+
+  // Phase 3.5: the segmented pickers. Pick 30s turns, reload, and assert the persisted
+  // settings AND that a new game actually uses it. TEST_TURN (&t=2) overrides gameplay
+  // length, so the "actually uses it" check runs on a t-less URL and reads the intro
+  // copy + the frozen game.settings — never the wall clock.
+  await page.click('#settings-btn');
+  await page.waitForSelector('#settings-sheet:not([hidden])');
+  assert.strictEqual(await page.getAttribute('#seg-turn button[data-val="15"]', 'aria-pressed'), 'true',
+    'the default 15s pick is marked');
+  assert.strictEqual(await text(page, '#seg-deck button[data-val="classic"]'), 'Classic');
+  assert.strictEqual(await page.getAttribute('#seg-deck button[data-val="classic"]', 'aria-pressed'), 'true',
+    'the Classic deck is picked by default');
+  await page.click('#seg-turn button[data-val="30"]');
+  assert.strictEqual(await page.getAttribute('#seg-turn button[data-val="30"]', 'aria-pressed'), 'true');
+  assert.strictEqual(await page.getAttribute('#seg-turn button[data-val="15"]', 'aria-pressed'), 'false');
+  await page.click('#sheet-close');
+
+  await page.reload();
+  await page.waitForSelector('#setup-screen.active');
+  const stored2 = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.settings')));
+  assert.strictEqual(stored2.turnSeconds, 30, 'gonuts.settings persisted turnSeconds:30');
+  assert.strictEqual(await page.evaluate(() => window.__gonuts.settings.turnSeconds), 30);
+  await page.click('#settings-btn');
+  await page.waitForSelector('#settings-sheet:not([hidden])');
+  assert.strictEqual(await page.getAttribute('#seg-turn button[data-val="30"]', 'aria-pressed'), 'true',
+    'the 30s pick survives the reload');
+  await page.click('#sheet-close');
+
+  // "Actually uses it": TEST mode always forces TEST_TURN >= 1s (Math.max(1, …) is the
+  // spec'd parse), so a ?test load can never show the settings-driven length. Run this
+  // leg on a PLAIN load with reduced-motion emulated — the media query kills the same
+  // animations the .test class does, so normal hit-tested clicks stay stable.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(base);
+  await page.waitForSelector('#setup-screen.active');
+  await startGame(page, ['Ann', 'Ben']);
+  assert.strictEqual(await text(page, '#intro-secs'), '30', 'intro copy reads the picked turn length');
+  const snap = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.game')));
+  assert.strictEqual(snap.game.settings.turnSeconds, 30,
+    'the frozen per-game snapshot carries the picked turn length');
+  // Deliberately do NOT play this turn — it would run 30 real wall-clock seconds.
 });
 
 // G-UX8 — Confetti upgrades: a 5-star tap fires a ~30-particle micro-burst anchored at
@@ -340,16 +382,18 @@ scenario('G-UX8 five-star tap fires an origin micro-burst with 🥜 glyphs', asy
 // S9 — Illegal-transition fuzz: every from→to edge NOT in the state table must be a
 // guarded no-op (returns false, state unchanged).
 scenario('S9 illegal transitions are all blocked', async ({ page, base }) => {
-  // Mirror of the STATES table (DESIGN.md §2; pass row + widened edges from Phase 3.4).
-  // A drift between this copy and the page's table surfaces as a fuzz failure — that
-  // is intentional: any commit that touches the table must update this mirror too.
+  // Mirror of the STATES table (DESIGN.md §2; pass/roundEnd rows + widened edges from
+  // Phase 3.4/3.5). A drift between this copy and the page's table surfaces as a fuzz
+  // failure — that is intentional: any commit that touches the table must update this
+  // mirror too.
   const TABLE = {
     setup:      ['intro'],
     intro:      ['countdown', 'setup'],
     countdown:  ['performing', 'setup'],
     performing: ['pass', 'rating', 'setup'],
     pass:       ['rating', 'setup'],
-    rating:     ['rating', 'pass', 'intro', 'winner', 'setup'],
+    rating:     ['rating', 'pass', 'intro', 'roundEnd', 'winner', 'setup'],
+    roundEnd:   ['intro', 'setup'],
     winner:     ['intro', 'setup'],
   };
   await page.goto(base + Q);
@@ -504,6 +548,87 @@ scenario('S13 pass screen names each rater once, never the performer, in queue o
     assert.strictEqual(new Set(summoned).size, summoned.length, 'each rater is summoned exactly once');
   }
   await page.waitForSelector('#winner-screen.active');   // the hand-off flow still completes the game
+});
+
+// S14 — Multi-round (Phase 3.5): rounds=2 picked via the settings sheet. The game visits
+// roundEnd exactly once, the between-rounds scoreboard shows the round-1 totals, round 2
+// reshuffles the order and resets the turn pointer, the intro tags the round, and the
+// final totals accumulate across both rounds.
+scenario('S14 rounds=2 reaches roundEnd once; totals accumulate across rounds', async ({ page, base }) => {
+  await page.goto(base + Q);
+  await page.click('#settings-btn');
+  await page.waitForSelector('#settings-sheet:not([hidden])');
+  await page.click('#seg-rounds button[data-val="2"]');
+  assert.strictEqual(await page.getAttribute('#seg-rounds button[data-val="2"]', 'aria-pressed'), 'true');
+  await page.click('#sheet-close');
+
+  await startGame(page, ['Ann', 'Ben']);
+  // Count roundEnd visits via the body[data-state] stamp — the machine's own DOM trace.
+  // (roundEnd always waits for a user click, so it can never be skipped inside one
+  // synchronous mutation batch.)
+  await page.evaluate(() => {
+    window.__states = [];
+    new MutationObserver(() => window.__states.push(document.body.dataset.state))
+      .observe(document.body, { attributes: true, attributeFilter: ['data-state'] });
+  });
+  assert.strictEqual(await page.evaluate(() => window.__gonuts.getGame().settings.rounds), 2,
+    'the frozen game snapshot carries rounds=2');
+  assert.strictEqual(await text(page, '#intro-round'), 'Round 1 of 2', 'intro shows the round tag');
+
+  const totals = {};                               // name → accumulated stars (test-side ground truth)
+  const playRound = async (stars) => {             // 2 players → 2 turns per round, 1 rater each
+    for (const s of stars) {
+      await page.waitForSelector('#intro-screen.active');
+      const performer = await page.evaluate(() => {
+        const g = window.__gonuts.getGame();
+        return g.players.find(p => p.id === g.order[g.turnIdx]).name;
+      });
+      await playTurn(page, [s]);
+      totals[performer] = (totals[performer] || 0) + s;
+    }
+  };
+
+  // Ratings picked so NO round-2 reshuffle can produce a tie: |1-5|=4, |3-2|=1.
+  await playRound([1, 5]);
+  await page.waitForSelector('#roundend-screen.active');
+  assert.strictEqual(await state(page), 'roundEnd');
+  assert.strictEqual(await text(page, '#roundend-title'), 'Round 1 done!');
+  assert.strictEqual(await text(page, '#next-round-btn'), 'Round 2!');
+  const round1Order = await page.evaluate(() => window.__gonuts.getGame().order.slice());
+  const expect1 = Object.entries(totals).map(([name, total]) => ({ name, total }))
+    .sort((a, b) => b.total - a.total);
+  const lis1 = await page.$$eval('#round-scores li', els => els.map(el => el.textContent.trim()));
+  assert.deepStrictEqual(lis1, expect1.map(r => `${r.name} — ${r.total} ⭐ (avg ${r.total.toFixed(1)})`),
+    'the running scoreboard shows the round-1 totals');
+  assert.strictEqual(await page.evaluate(() => window.__gonuts.getGame().round), 1,
+    'the round only bumps on the button, not on roundEnd entry');
+
+  await page.click('#next-round-btn');
+  await page.waitForSelector('#intro-screen.active');
+  const g2 = await page.evaluate(() => {
+    const g = window.__gonuts.getGame();
+    return { round: g.round, turnIdx: g.turnIdx, order: g.order.slice() };
+  });
+  assert.strictEqual(g2.round, 2);
+  assert.strictEqual(g2.turnIdx, 0, 'round 2 resets the turn pointer');
+  assert.deepStrictEqual([...g2.order].sort(), [...round1Order].sort(),
+    'the round-2 order is a permutation of the same players');
+  assert.strictEqual(await text(page, '#intro-round'), 'Round 2 of 2');
+
+  await playRound([3, 2]);
+  await page.waitForSelector('#winner-screen.active');   // straight to winner — NO second roundEnd
+  assert.strictEqual(await state(page), 'winner');
+  assert.strictEqual(await page.evaluate(() => window.__states.filter(s => s === 'roundEnd').length), 1,
+    'roundEnd is visited exactly once in a 2-round game');
+
+  // Final totals accumulate across both rounds (each player got 2 ratings → avg = total/2).
+  const expect = Object.entries(totals).map(([name, total]) => ({ name, total }))
+    .sort((a, b) => b.total - a.total);
+  assert.notStrictEqual(expect[0].total, expect[1].total, 'S14 script must produce a unique winner');
+  assert.strictEqual(await text(page, '#winner-name'), expect[0].name);
+  assert.strictEqual(await text(page, '#winner-subtitle'), 'CRAZIEST OF THEM ALL');
+  const lis = await page.$$eval('#final-scores li', els => els.map(el => el.textContent.trim()));
+  assert.deepStrictEqual(lis, expect.map(r => `${r.name} — ${r.total} ⭐ (avg ${(r.total / 2).toFixed(1)})`));
 });
 
 // ---------- runner ----------

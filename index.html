@@ -270,6 +270,21 @@
     overflow-wrap: anywhere;   /* a max-length name at the clamp floor still beats 320px — wrap, never clip */
   }
 
+  /* ROUND END (Phase 3.5): the between-rounds scoreboard. Reuses .scoreboard wholesale;
+     the screen is a panel screen, so it joins the mascot reserve/bow-out lists below. */
+  #roundend-screen .roundend-emoji { font-size: clamp(56px, 14vw, 100px); }
+  .roundend-title {
+    font-size: clamp(32px, 8vw, 64px);
+    color: #ffeb3b;
+    text-shadow: 4px 4px 0 var(--ink);
+    margin: 6px 0 0;
+    transform: rotate(-2deg);
+  }
+  #roundend-screen .scoreboard { margin-top: 16px; }
+
+  /* Multi-round intro tag (Phase 3.5): shows only when the game plays >1 round */
+  #intro-round { margin-bottom: 8px; font-weight: bold; }
+
   /* RATING SCREEN */
   .rating-title {
     font-size: clamp(24px, 5vw, 38px);
@@ -406,7 +421,7 @@
      reserve tracks the mascot's own clamp() so small phones give up less space; the
      action screens (intro/countdown/timer) keep the compact padding — their content
      is narrow and centered, so the corner is already clear of buttons. */
-  #setup-screen, #rating-screen, #winner-screen {
+  #setup-screen, #rating-screen, #roundend-screen, #winner-screen {
     padding-bottom: 134px;
     padding-bottom: calc(clamp(88px, 26vmin, 120px) + 14px + env(safe-area-inset-bottom, 0px));
   }
@@ -422,6 +437,7 @@
   body[data-state="performing"] #pose-hype,
   body[data-state="pass"] #pose-watch,        /* Phase 3 state — wired ahead of time */
   body[data-state="rating"] #pose-watch,
+  body[data-state="roundEnd"] #pose-idle,     /* between rounds: neutral cheer next to the scoreboard */
   body[data-state="winner"] #pose-crown { display: inline; }
   /* Crowded viewports: when the active screen's content (measured WITH the reserve in
      place) can't fit the viewport, its panels would scroll over the corner and reduce
@@ -432,8 +448,10 @@
      reserve is returned. Poses remain pure body[data-state] CSS (G-UX3). */
   body.crowded[data-state="setup"] #mascot,
   body.crowded[data-state="rating"] #mascot,
+  body.crowded[data-state="roundEnd"] #mascot,
   body.crowded[data-state="winner"] #mascot { display: none; }
-  body.crowded #setup-screen, body.crowded #rating-screen, body.crowded #winner-screen {
+  body.crowded #setup-screen, body.crowded #rating-screen,
+  body.crowded #roundend-screen, body.crowded #winner-screen {
     padding-bottom: 20px;
     padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
   }
@@ -476,6 +494,17 @@
   }
   .sheet-panel h3 { margin: 0 0 12px; font-size: 24px; }
   .sheet-toggle { display: block; width: min(80vw, 320px); margin: 8px auto; }
+  /* Segmented pickers (Phase 3.5): turn length / rounds / deck. Pure setSetting()
+     writes — the sheet only opens from setup/winner (gear is CSS-gated above), and
+     game.settings is a frozen snapshot, so picks only ever shape the NEXT game. */
+  .sheet-label { font-size: 18px; font-weight: bold; margin: 12px 0 4px; }
+  .seg { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .seg button {
+    font-size: 17px; padding: 8px 18px; margin: 0;
+    border-width: 3px; border-radius: 14px; box-shadow: 3px 3px 0 var(--ink);
+  }
+  .seg button[aria-pressed="true"] { background: #ffeb3b; }
+  .sheet-hint { font-size: 14px; opacity: 0.75; margin: 12px 0 4px; }
 
   /* A11y (G-UX5): visually-hidden live region + no focus ring on programmatically
      focused headings (they carry tabindex="-1"; keyboard-tabbable controls keep theirs). */
@@ -527,6 +556,7 @@
 
 <!-- TURN INTRO -->
 <section id="intro-screen" class="screen">
+  <div class="pill" id="intro-round" hidden>Round 1 of 2</div>
   <div class="now-up">Next up...</div>
   <h2 class="name" id="intro-name" tabindex="-1">—</h2>
   <div class="prompt-lead">Go nuts like…</div>
@@ -580,6 +610,17 @@
     <div id="rating-word" class="subtitle" style="margin-bottom:10px;min-height:1.4em;">Tap a star!</div>
     <button id="submit-rating-btn" class="primary" disabled>Submit Rating</button>
   </div>
+</section>
+
+<!-- ROUND END (Phase 3.5: the between-rounds running scoreboard — owns no timers) -->
+<section id="roundend-screen" class="screen">
+  <div class="roundend-emoji" aria-hidden="true">🌰</div>
+  <h2 class="roundend-title" id="roundend-title" tabindex="-1">Round 1 done!</h2>
+  <div class="scoreboard">
+    <h3>🌰 Scores so far</h3>
+    <ol id="round-scores"></ol>
+  </div>
+  <button id="next-round-btn" class="go">Round 2!</button>
 </section>
 
 <!-- WINNER -->
@@ -706,6 +747,15 @@
   <div id="sheet-backdrop"></div>
   <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <h3 id="sheet-title">⚙️ Settings</h3>
+    <!-- Segmented pickers (Phase 3.5): buttons are built at boot from CONFIG.TURN_CHOICES /
+         CONFIG.ROUND_CHOICES / the deck registry ('Classic' only until Phase 4). -->
+    <div class="sheet-label" id="seg-turn-label">⏱️ Turn length</div>
+    <div class="seg" id="seg-turn" role="group" aria-labelledby="seg-turn-label"></div>
+    <div class="sheet-label" id="seg-rounds-label">🔁 Rounds</div>
+    <div class="seg" id="seg-rounds" role="group" aria-labelledby="seg-rounds-label"></div>
+    <div class="sheet-label" id="seg-deck-label">🃏 Deck</div>
+    <div class="seg" id="seg-deck" role="group" aria-labelledby="seg-deck-label"></div>
+    <div class="sheet-hint">Pickers apply to the next game.</div>
     <button id="sheet-sound" class="sheet-toggle" aria-pressed="true">🔊 Sound: On</button>
     <button id="sheet-haptics" class="sheet-toggle" aria-pressed="true">📳 Haptics: On</button>
     <button id="sheet-close" class="sheet-toggle primary">Done</button>
@@ -1181,8 +1231,9 @@
     // Phase 3: tiebreak (NUT-OFF) turn stepping rides here.
     g.turnIdx++;
     if (g.turnIdx < g.order.length) return transition('intro');
-    // Phase 3: multi-round (roundEnd) and NUT-OFF tie routing ride here; Phase 1 renders
-    // ties as co-winners directly in enterWinner via getResults().coWinners.
+    if (g.round < g.settings.rounds) return transition('roundEnd');   // Phase 3.5: more rounds to play
+    // Phase 3: NUT-OFF tie routing rides here; meanwhile ties render as co-winners
+    // directly in enterWinner via getResults().coWinners.
     return transition('winner');
   }
 
@@ -1194,7 +1245,8 @@
     countdown:  { screen: 'countdown', to: ['performing', 'setup'],                enter: enterCountdown,  resume: 'intro' },
     performing: { screen: 'timer',     to: ['pass', 'rating', 'setup'],            enter: enterPerforming, resume: 'intro' },
     pass:       { screen: 'pass',      to: ['rating', 'setup'],                    enter: enterPass },
-    rating:     { screen: 'rating',    to: ['rating', 'pass', 'intro', 'winner', 'setup'], enter: enterRating, resume: 'pass' },
+    rating:     { screen: 'rating',    to: ['rating', 'pass', 'intro', 'roundEnd', 'winner', 'setup'], enter: enterRating, resume: 'pass' },
+    roundEnd:   { screen: 'roundend',  to: ['intro', 'setup'],                     enter: enterRoundEnd },
     winner:     { screen: 'winner',    to: ['intro', 'setup'],                     enter: enterWinner },
   };
   const machine = { state: null };         // null = boot; transitions from boot are always legal (resume targets)
@@ -1294,6 +1346,9 @@
     if (!p) return transition('setup');
     $('intro-name').textContent = p.name;
     $('intro-secs').textContent = turnSecondsForCurrentTurn();
+    const multi = game.settings.rounds > 1;        // single-round games skip the tag (Phase 3.5)
+    $('intro-round').hidden = !multi;
+    if (multi) $('intro-round').textContent = `Round ${game.round} of ${game.settings.rounds}`;
     if (game.currentPromptIdx == null) drawPrompt();   // a resumed turn keeps its persisted prompt
     renderIntroPrompt();
   }
@@ -1446,6 +1501,23 @@
     }
   }
 
+  // -- roundEnd (multi-round, Phase 3.5) --
+  // Renders purely from getResults(game).rows — totals accumulate automatically because
+  // every turn entry carries its round. Resumable as itself (owns no timers, no resume key).
+  function enterRoundEnd() {
+    const g = game;
+    if (!g) return transition('setup');
+    $('roundend-title').textContent = `Round ${g.round} done!`;
+    const ol = $('round-scores');
+    ol.innerHTML = '';
+    getResults(g).rows.forEach(r => {
+      const li = document.createElement('li');
+      li.textContent = `${r.name} — ${r.total} ⭐ (avg ${r.avg.toFixed(1)})`;
+      ol.appendChild(li);
+    });
+    $('next-round-btn').textContent = `Round ${g.round + 1}!`;
+  }
+
   // -- winner --
   function enterWinner() {
     if (!game) return transition('setup');
@@ -1512,6 +1584,17 @@
     advance();
   };
 
+  // Next round (3.5): data op + one transition. The state guard makes a key-repeat
+  // double fire harmless — the second activation must not bump round again (the
+  // transition itself would already be blocked from 'intro', but the mutation wouldn't).
+  $('next-round-btn').onclick = () => {
+    if (machine.state !== 'roundEnd' || !game) return;
+    game.round++;
+    game.turnIdx = 0;
+    game.order = shuffle(game.players.map(p => p.id));   // every round gets a fresh order (DESIGN.md §7)
+    transition('intro');
+  };
+
   $('play-again-btn').onclick = () => {    // fresh game, same crew (order reshuffles from Phase 3)
     game = newGame(game.players.map(p => p.name));
     transition('intro');
@@ -1549,6 +1632,33 @@
 
   $('sound-btn').onclick = () => { setSetting('sound', !settings.sound); renderSoundControls(); };
 
+  // Segmented pickers (Phase 3.5): built ONCE at boot from CONFIG/the deck registry;
+  // renderSheetPickers() only syncs aria-pressed, so focus stays on the tapped button.
+  // Every pick is a plain setSetting() — game.settings is a frozen snapshot, so an
+  // in-flight game can never see the change (DESIGN.md §5).
+  function buildSegPicker(id, choices, fmt, key) {
+    const wrap = $(id);
+    for (const c of choices) {
+      const b = document.createElement('button');
+      b.textContent = fmt(c);
+      b.dataset.val = String(c);
+      b.onclick = () => { setSetting(key, c); renderSheetPickers(); };
+      wrap.appendChild(b);
+    }
+  }
+  function renderSheetPickers() {
+    const sync = (id, cur) => {
+      for (const b of $(id).children) b.setAttribute('aria-pressed', String(b.dataset.val === String(cur)));
+    };
+    sync('seg-turn', settings.turnSeconds);
+    sync('seg-rounds', settings.rounds);
+    sync('seg-deck', settings.deckId);
+  }
+  buildSegPicker('seg-turn', CONFIG.TURN_CHOICES, s => `${s}s`, 'turnSeconds');
+  buildSegPicker('seg-rounds', CONFIG.ROUND_CHOICES, String, 'rounds');
+  buildSegPicker('seg-deck', Object.keys(DECKS), id => DECKS[id].name, 'deckId');   // custom decks join in Phase 4
+  renderSheetPickers();
+
   // Sheet open/close (G-UX5): a real modal. While it is up, everything behind it goes
   // inert (unfocusable + unclickable), so a keyboard-only user can never Tab to
   // #start-btn and launch the game underneath the sheet; Escape, Done, and the backdrop
@@ -1562,7 +1672,7 @@
     for (const el of document.body.children) {       // inert the whole background, not just pointers
       if (el !== sheet && el.tagName !== 'SCRIPT') el.inert = open;
     }
-    if (open) { renderSoundControls(); $('sheet-close').focus(); }
+    if (open) { renderSoundControls(); renderSheetPickers(); $('sheet-close').focus(); }
     else if (hadFocus) $('settings-btn').focus();    // hand focus back to the opener
   }
 
@@ -1631,6 +1741,9 @@
     if (pendingResume.phase === 'winner') {        // finished game: no "next" performer exists
       $('resume-msg').textContent =
         `Finished game — ${g.players.length} players. Resume to see the results.`;
+    } else if (pendingResume.phase === 'roundEnd') {   // between rounds: turnIdx has run past the order
+      $('resume-msg').textContent =
+        `Game in progress — ${g.players.length} players, round ${g.round} done. Resume for round ${g.round + 1}.`;
     } else {
       const nextId = g.tiebreak ? g.tiebreak.order[g.tiebreak.turnIdx] : g.order[g.turnIdx];
       const next = g.players.find(p => p.id === nextId);
