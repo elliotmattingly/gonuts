@@ -546,10 +546,12 @@
   body[data-state="setup"] #settings-btn,
   body[data-state="winner"] #settings-btn { display: block; }
 
-  /* SETTINGS SHEET (overlay, NOT a state: owns no timers, never navigates — DESIGN.md §2) */
-  #settings-sheet { position: fixed; inset: 0; z-index: 600; }
-  #settings-sheet[hidden] { display: none; }
-  #sheet-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+  /* SETTINGS SHEET + DECK EDITOR SHEET (overlays, NOT states: own no timers, never
+     navigate — DESIGN.md §2). The deck editor (Phase 4.1) reuses the sheet pattern
+     wholesale: same backdrop, same dvh-capped scrollable .sheet-panel, same modal dance. */
+  #settings-sheet, #deck-editor-sheet { position: fixed; inset: 0; z-index: 600; }
+  #settings-sheet[hidden], #deck-editor-sheet[hidden] { display: none; }
+  #sheet-backdrop, #deck-editor-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
   .sheet-panel {
     position: absolute; left: 0; right: 0; bottom: 0;
     background: var(--paper);
@@ -585,6 +587,28 @@
   }
   .seg button[aria-pressed="true"] { background: #ffeb3b; }
   .sheet-hint { font-size: 14px; opacity: 0.75; margin: 12px 0 4px; }
+
+  /* CUSTOM DECKS (Phase 4.1): manage rows under the deck picker + the editor sheet's
+     form. Deck names are hostile user input — they only ever render via textContent
+     (picker buttons, manage rows) or attribute values (aria-labels), never innerHTML. */
+  #deck-manage-list { margin: 0 auto; max-width: 400px; }   /* zero height while no custom decks exist */
+  .deck-row { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; }
+  .deck-row-name { flex: 1; min-width: 0; text-align: left; font-weight: bold;
+                   font-size: 16px; overflow-wrap: anywhere; }   /* an unbreakable 24-char name wraps, never clips */
+  .deck-row button {
+    font-size: 15px; padding: 6px 14px; margin: 0;
+    border-width: 3px; border-radius: 12px; box-shadow: 2px 2px 0 var(--ink);
+  }
+  #deck-name-input, #deck-prompts-input { display: block; width: 100%; max-width: 400px; margin: 4px auto 0; }
+  #deck-prompts-input {
+    font-family: inherit; font-size: 16px;   /* 16px floor: iOS Safari never auto-zooms the focused field */
+    min-height: 6.5em; resize: vertical;
+    padding: 12px 14px; border: 4px solid var(--ink); border-radius: 18px;
+    background: var(--paper); color: var(--ink); outline: none;
+  }
+  #deck-prompts-input:focus { box-shadow: 0 0 0 4px #ffeb3b; }
+  .deck-count { font-size: 15px; font-weight: bold; color: #c62828; min-height: 1.3em; margin: 8px 0 2px; }
+  .deck-count.ok { color: #2e7d32; }
 
   /* A11y (G-UX5): visually-hidden live region + no focus ring on programmatically
      focused headings (they carry tabindex="-1"; keyboard-tabbable controls keep theirs). */
@@ -847,19 +871,44 @@
   <div id="sheet-backdrop"></div>
   <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <h3 id="sheet-title">⚙️ Settings</h3>
-    <!-- Segmented pickers (Phase 3.5): buttons are built at boot from CONFIG.TURN_CHOICES /
-         CONFIG.ROUND_CHOICES / the deck registry ('Classic' only until Phase 4). -->
+    <!-- Segmented pickers (Phase 3.5): turn/rounds buttons are built once at boot from
+         CONFIG.TURN_CHOICES / CONFIG.ROUND_CHOICES; the deck picker is REBUILT by
+         renderDeckPicker() because custom decks (Phase 4.1) change the registry itself. -->
     <div class="sheet-label" id="seg-turn-label">⏱️ Turn length</div>
     <div class="seg" id="seg-turn" role="group" aria-labelledby="seg-turn-label"></div>
     <div class="sheet-label" id="seg-rounds-label">🔁 Rounds</div>
     <div class="seg" id="seg-rounds" role="group" aria-labelledby="seg-rounds-label"></div>
     <div class="sheet-label" id="seg-deck-label">🃏 Deck</div>
     <div class="seg" id="seg-deck" role="group" aria-labelledby="seg-deck-label"></div>
+    <!-- Custom decks (Phase 4.1): renderDeckPicker() fills the picker above (built-ins +
+         customs + the ➕ New deck button, all one wrapping seg row) and one Edit/Delete
+         row per custom deck here (built-in Classic is neither editable nor deletable). -->
+    <div id="deck-manage-list"></div>
     <div class="sheet-hint">Pickers apply to the next game.</div>
     <button id="sheet-sound" class="sheet-toggle" aria-pressed="true">🔊 Sound: On</button>
     <button id="sheet-haptics" class="sheet-toggle" aria-pressed="true">📳 Haptics: On</button>
     <button id="sheet-clear-hof" class="sheet-toggle danger">🗑️ Clear Hall of Fame</button>
     <button id="sheet-close" class="sheet-toggle primary">Done</button>
+  </div>
+</div>
+
+<!-- DECK EDITOR SHEET (Phase 4.1): the same modal pattern as the settings sheet — dialog
+     semantics, inert background, Escape/Cancel/backdrop dismiss, dvh-capped scrollable
+     panel — reached only FROM that sheet (New deck / per-deck Edit), so it inherits the
+     setup/winner gating. One modal at a time: opening it closes the settings sheet, and
+     every USER dismissal reopens it (show() force-closes both on navigation). Writes
+     gonuts.decks (DESIGN.md §8.1); owns no timers, never navigates. -->
+<div id="deck-editor-sheet" hidden>
+  <div id="deck-editor-backdrop"></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="deck-editor-title">
+    <h3 id="deck-editor-title">🃏 New deck</h3>
+    <input id="deck-name-input" placeholder="Deck name" maxlength="24" autocomplete="off" />
+    <div class="sheet-label" id="deck-prompts-label">Prompts — one per line: "Go nuts like…"</div>
+    <textarea id="deck-prompts-input" rows="6" aria-labelledby="deck-prompts-label"
+              placeholder="a llama at a limbo contest&#10;a robot learning to sneeze&#10;…"></textarea>
+    <div class="deck-count" id="deck-count" aria-live="polite">—</div>
+    <button id="deck-save-btn" class="sheet-toggle primary" disabled>💾 Save deck</button>
+    <button id="deck-cancel-btn" class="sheet-toggle">Cancel</button>
   </div>
 </div>
 
@@ -881,6 +930,9 @@
     MIN_PLAYERS:    2,
     MAX_NAME_LEN:   14,
     SKIPS_PER_PLAYER: 1,                   // Phase 3 prompt skips
+    DECK_MIN_PROMPTS: 10,                  // Phase 4.1 editor: a custom deck needs at least this many prompts
+    DECK_PROMPT_MAX: 90,                   // Phase 4.1 editor: per-prompt char cap (longer lines truncate)
+    DECK_NAME_MAX: 24,                     // Phase 4.1 editor: deck name cap (mirrors the input's maxlength)
     RESUME_MAX_AGE_MS: 12 * 3600 * 1000,   // saves older than 12h are silently discarded
     HOF_MAX_ENTRIES: 20,
     RING_CIRC: 2 * Math.PI * 90,
@@ -1102,10 +1154,28 @@
     ] },
   };
 
+  // Custom decks (Phase 4.1): gonuts.decks rides its OWN key — Reset never clears it;
+  // per-deck delete does (the last delete drops the key). Shape (DESIGN.md §8.1):
+  //   { v: 1, decks: { 'c<epoch36>': { name, prompts: ['…'] } } }
+  // loadDecks() is the ONE validated read path: hostile or malformed storage (wrong v,
+  // missing name, empty/non-string prompts) degrades to "no custom decks", never an error.
+  function loadDecks() {
+    const d = store.get(KEYS.decks);
+    const decks = {};
+    if (d?.v === 1 && d.decks && typeof d.decks === 'object') {
+      for (const [id, deck] of Object.entries(d.decks)) {
+        if (deck && typeof deck.name === 'string' && Array.isArray(deck.prompts)
+            && deck.prompts.length && deck.prompts.every(p => typeof p === 'string')) {
+          decks[id] = deck;
+        }
+      }
+    }
+    return { v: 1, decks };
+  }
+
   function activeDeck(deckId = game?.settings.deckId ?? settings.deckId) {
-    const custom = store.get(KEYS.decks)?.decks || {};   // Phase 4 editor storage shape ({ v, decks })
-    const all = Object.assign({}, custom, DECKS);        // built-ins win over shadowing custom ids
-    return all[deckId] || all.classic;                   // unknown/deleted deck falls back to classic
+    const all = Object.assign({}, loadDecks().decks, DECKS);  // built-ins win over shadowing custom ids
+    return all[deckId] || all.classic;                        // unknown/deleted deck falls back to classic
   }
 
   // ---------- STORE ----------
@@ -1433,6 +1503,8 @@
   function show(name) {                    // PRIVATE to transition(): dumb DOM toggler
     setSheetOpen(false);                   // no overlay outlives a navigation (belt-and-braces:
                                            // the inert background makes mid-sheet transitions unreachable anyway)
+    setDeckEditorOpen(false);              // …and neither does the deck editor (Phase 4.1) — force-close,
+                                           // never the closeDeckEditor() path (that would reopen the sheet)
     document.body.dataset.state = machine.state;
     document.querySelectorAll('.screen').forEach(el =>
       el.classList.toggle('active', el.id === `${name}-screen`));
@@ -1929,7 +2001,10 @@
   }
   function renderSheetPickers() {
     const sync = (id, cur) => {
-      for (const b of $(id).children) b.setAttribute('aria-pressed', String(b.dataset.val === String(cur)));
+      for (const b of $(id).children) {
+        if (b.dataset.val === undefined) continue;   // ➕ New deck is an action, not a pick — no aria-pressed
+        b.setAttribute('aria-pressed', String(b.dataset.val === String(cur)));
+      }
     };
     sync('seg-turn', settings.turnSeconds);
     sync('seg-rounds', settings.rounds);
@@ -1937,7 +2012,63 @@
   }
   buildSegPicker('seg-turn', CONFIG.TURN_CHOICES, s => `${s}s`, 'turnSeconds');
   buildSegPicker('seg-rounds', CONFIG.ROUND_CHOICES, String, 'rounds');
-  buildSegPicker('seg-deck', Object.keys(DECKS), id => DECKS[id].name, 'deckId');   // custom decks join in Phase 4
+
+  // Deck picker + custom-deck management (Phase 4.1). Unlike the boot-built turn/rounds
+  // pickers this one is REBUILT on every render — saves and deletes change the registry
+  // itself, not just which entry is pressed (a pick still only re-syncs aria-pressed via
+  // renderSheetPickers(), so focus never jumps off the tapped button). Deck names are
+  // hostile user input: they render via textContent/attributes only, never innerHTML.
+  function renderDeckPicker() {
+    const custom = loadDecks().decks;
+    const wrap = $('seg-deck');
+    wrap.innerHTML = '';
+    const entries = [...Object.entries(DECKS),
+                     ...Object.entries(custom).filter(([id]) => !Object.hasOwn(DECKS, id))];
+    for (const [id, deck] of entries) {
+      const b = document.createElement('button');
+      b.textContent = deck.name;
+      b.dataset.val = id;
+      b.onclick = () => { setSetting('deckId', id); renderSheetPickers(); };
+      wrap.appendChild(b);
+    }
+    const add = document.createElement('button');   // ➕ New deck rides the same wrapping seg row: with no
+    add.id = 'deck-new-btn';                        // custom decks it shares Classic's line — zero extra height,
+    add.textContent = '➕ New deck';                // so the sheet's backdrop stays reachable on short viewports
+    add.onclick = () => openDeckEditor();
+    wrap.appendChild(add);
+    const list = $('deck-manage-list');    // one Edit/Delete row per CUSTOM deck (built-ins have neither)
+    list.innerHTML = '';
+    for (const [id, deck] of Object.entries(custom)) {
+      const row = document.createElement('div');
+      row.className = 'deck-row';
+      const name = document.createElement('span');
+      name.className = 'deck-row-name';
+      name.textContent = deck.name;
+      const edit = document.createElement('button');
+      edit.className = 'deck-edit';
+      edit.textContent = '✏️ Edit';
+      edit.setAttribute('aria-label', `Edit deck ${deck.name}`);
+      edit.onclick = () => openDeckEditor(id);
+      const del = document.createElement('button');
+      del.className = 'deck-del';
+      del.textContent = '🗑️';
+      del.setAttribute('aria-label', `Delete deck ${deck.name}`);
+      del.onclick = () => {                // data op + re-render — the sheet never navigates
+        if (!confirm(`Delete deck "${deck.name}"?`)) return;
+        const d = loadDecks();
+        delete d.decks[id];
+        if (Object.keys(d.decks).length) store.set(KEYS.decks, d);
+        else store.del(KEYS.decks);        // the last per-deck delete clears the key (DESIGN.md §4 table)
+        if (settings.deckId === id) setSetting('deckId', 'classic');  // deleting the picked deck falls back
+        renderDeckPicker();
+        renderSheetPickers();
+        $('deck-new-btn').focus();         // the tapped row is gone — keep focus inside the sheet
+      };
+      row.append(name, edit, del);
+      list.appendChild(row);
+    }
+  }
+  renderDeckPicker();
   renderSheetPickers();
 
   // Sheet open/close (G-UX5): a real modal. While it is up, everything behind it goes
@@ -1953,7 +2084,7 @@
     for (const el of document.body.children) {       // inert the whole background, not just pointers
       if (el !== sheet && el.tagName !== 'SCRIPT') el.inert = open;
     }
-    if (open) { renderSoundControls(); renderSheetPickers(); $('sheet-close').focus(); }
+    if (open) { renderSoundControls(); renderDeckPicker(); renderSheetPickers(); $('sheet-close').focus(); }
     else if (hadFocus) $('settings-btn').focus();    // hand focus back to the opener
   }
 
@@ -1961,7 +2092,9 @@
   $('sheet-backdrop').onclick = () => setSheetOpen(false);
   $('sheet-close').onclick = () => setSheetOpen(false);
   document.addEventListener('keydown', (e) => { /* raw-timer-ok: permanent listener */
-    if (e.key === 'Escape') setSheetOpen(false);
+    if (e.key !== 'Escape') return;
+    if (!$('deck-editor-sheet').hidden) return closeDeckEditor();  // the editor sits over the sheet flow — back to settings
+    setSheetOpen(false);
   });
   $('sheet-sound').onclick = () => { setSetting('sound', !settings.sound); renderSoundControls(); };
   $('sheet-haptics').onclick = () => { setSetting('haptics', !settings.haptics); renderSoundControls(); };
@@ -1969,6 +2102,71 @@
     if (!confirm('Clear the Hall of Fame?')) return;
     store.del(KEYS.hof);
     renderHofList();                       // sync the setup-screen list if it's open behind the sheet
+  };
+
+  // Deck editor sheet (Phase 4.1): opened from the settings sheet's deck section (New
+  // deck / per-deck Edit). setDeckEditorOpen mirrors setSheetOpen's modal dance; show()
+  // force-closes it; every USER dismissal (Save/Cancel/Escape/backdrop) lands back on
+  // the settings sheet. Pure DOM + storage writes: no timers, no navigation.
+  let editingDeckId = null;                // null = composing a NEW deck; else the id being edited
+
+  function parseDeckPrompts(raw) {         // one prompt per line, trimmed, blanks dropped, capped (§8.1)
+    return raw.split('\n').map(s => s.trim()).filter(Boolean)
+      .map(s => s.slice(0, CONFIG.DECK_PROMPT_MAX));
+  }
+
+  function renderDeckValidation() {        // the friendly count/validation line + save gating
+    const n = parseDeckPrompts($('deck-prompts-input').value).length;
+    const named = !!$('deck-name-input').value.trim();
+    const ok = named && n >= CONFIG.DECK_MIN_PROMPTS;
+    const line = $('deck-count');
+    line.textContent =
+      n < CONFIG.DECK_MIN_PROMPTS ? `${n} prompt${n === 1 ? '' : 's'} — need at least ${CONFIG.DECK_MIN_PROMPTS}`
+      : ok                        ? `${n} prompts — ready to save!`
+      :                             `${n} prompts — now name your deck!`;
+    line.classList.toggle('ok', ok);
+    $('deck-save-btn').disabled = !ok;
+  }
+
+  function setDeckEditorOpen(open) {       // the same modal dance as setSheetOpen (G-UX5)
+    const sheet = $('deck-editor-sheet');
+    if (sheet.hidden === !open) return;    // already in the requested state
+    sheet.hidden = !open;
+    for (const el of document.body.children) {       // inert the whole background, not just pointers
+      if (el !== sheet && el.tagName !== 'SCRIPT') el.inert = open;
+    }
+    if (open) { renderDeckValidation(); $('deck-name-input').focus(); }
+  }
+
+  function openDeckEditor(deckId = null) {
+    const deck = deckId ? loadDecks().decks[deckId] : null;
+    editingDeckId = deck ? deckId : null;  // a stale/unknown id composes a new deck instead
+    $('deck-editor-title').textContent = deck ? '✏️ Edit deck' : '🃏 New deck';
+    $('deck-name-input').value = deck?.name ?? '';
+    $('deck-prompts-input').value = deck ? deck.prompts.join('\n') : '';
+    setSheetOpen(false);                   // one modal at a time
+    setDeckEditorOpen(true);
+  }
+
+  function closeDeckEditor() {             // user dismissal → back to the settings sheet
+    setDeckEditorOpen(false);
+    setSheetOpen(true);                    // reopening rebuilds the picker + manage rows
+  }
+
+  $('deck-editor-backdrop').onclick = closeDeckEditor;
+  $('deck-cancel-btn').onclick = closeDeckEditor;
+  $('deck-name-input').addEventListener('input', renderDeckValidation);
+  $('deck-prompts-input').addEventListener('input', renderDeckValidation);
+
+  $('deck-save-btn').onclick = () => {
+    if ($('deck-editor-sheet').hidden) return;   // key-repeat double fire: the first save already closed the editor
+    const name = $('deck-name-input').value.trim().slice(0, CONFIG.DECK_NAME_MAX);
+    const prompts = parseDeckPrompts($('deck-prompts-input').value);
+    if (!name || prompts.length < CONFIG.DECK_MIN_PROMPTS) return;  // belt-and-braces: the button is disabled
+    const d = loadDecks();
+    d.decks[editingDeckId ?? 'c' + Date.now().toString(36)] = { name, prompts };  // generated id (§8.1) — deliberately not crypto
+    store.set(KEYS.decks, d);
+    closeDeckEditor();
   };
 
   $('resume-btn').onclick = () => { if (pendingResume) resumeGame(pendingResume); };

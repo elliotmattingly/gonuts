@@ -815,6 +815,119 @@ scenario('S14 rounds=2 reaches roundEnd once; totals accumulate across rounds', 
   assert.deepStrictEqual(lis, expect.map(r => `${r.name} — ${r.total} ⭐ (avg ${(r.total / 2).toFixed(1)})`));
 });
 
+// S15 — Custom decks (Phase 4.1): the editor sheet (a real modal, one at a time with the
+// settings sheet) creates a deck into gonuts.decks — trimmed, blank lines dropped, long
+// lines capped at 90 chars, >= 10 prompts gated by the validation line; the picker lists
+// and selects it; a seeded 2-player game draws EVERY prompt from it; Edit updates the same
+// id in place; deleting the selected deck falls back to classic (clearing settings.deckId
+// and, as the last deck, the gonuts.decks key itself). The deck name is hostile on purpose:
+// it must render as literal text everywhere (textContent, never innerHTML).
+scenario('S15 custom deck: editor creates it, game draws from it, delete falls back to classic', async ({ page, base }) => {
+  const NAME = '<b>Zoo & "Nuts"</b>';
+  const NAME2 = NAME + ' II';                        // 22 chars — still under the 24-char cap
+  const prompts = Array.from({ length: 11 }, (_, i) => `a zebra doing zany thing #${i + 1}`);
+  const longLine = 'a marathon zebra prompt ' + 'z'.repeat(100);   // > 90 chars — the editor caps it
+  const expected = [...prompts, longLine.slice(0, 90)];            // the 12 prompts as saved
+  // Messy on purpose: padded first line trims, blank + whitespace-only lines drop, long line caps.
+  const typed = ['  ' + prompts[0] + '   ', ...prompts.slice(1), '', '   ', longLine].join('\n');
+
+  await page.goto(base + Q);
+  await page.click('#settings-btn');
+  await page.waitForSelector('#settings-sheet:not([hidden])');
+  assert.strictEqual(await page.$$eval('#deck-manage-list .deck-row', els => els.length), 0, 'no custom decks yet');
+
+  // New deck → the editor replaces the settings sheet (one modal at a time), as a real modal.
+  await page.click('#deck-new-btn');
+  await page.waitForSelector('#deck-editor-sheet:not([hidden])');
+  assert.strictEqual(await page.$('#settings-sheet:not([hidden])'), null, 'settings sheet closes under the editor');
+  assert.strictEqual(await page.getAttribute('#deck-editor-sheet .sheet-panel', 'role'), 'dialog');
+  assert.strictEqual(await page.getAttribute('#deck-editor-sheet .sheet-panel', 'aria-modal'), 'true');
+  assert.ok(await page.$eval('#setup-screen', el => el.inert), 'background is inert behind the editor');
+  await page.keyboard.press('Escape');               // Escape backs out of the editor…
+  assert.strictEqual(await page.$('#deck-editor-sheet:not([hidden])'), null, 'Escape closes the editor');
+  await page.waitForSelector('#settings-sheet:not([hidden])');   // …and lands back on the settings sheet
+
+  // Validation line: too few prompts / missing name keep Save disabled, with a friendly count.
+  await page.click('#deck-new-btn');
+  await page.waitForSelector('#deck-editor-sheet:not([hidden])');
+  assert.ok((await text(page, '#deck-count')).includes('need at least 10'), 'empty editor shows the minimum');
+  await page.fill('#deck-prompts-input', prompts.slice(0, 3).join('\n'));
+  assert.ok((await text(page, '#deck-count')).startsWith('3 prompts'), 'count line tracks the textarea');
+  assert.ok(await page.$eval('#deck-save-btn', el => el.disabled), 'save disabled below 10 prompts');
+  await page.fill('#deck-prompts-input', typed);
+  assert.ok((await text(page, '#deck-count')).includes('name your deck'), '12 prompts but still unnamed');
+  assert.ok(await page.$eval('#deck-save-btn', el => el.disabled), 'save disabled without a name');
+  await page.fill('#deck-name-input', NAME);
+  assert.ok((await text(page, '#deck-count')).startsWith('12 prompts'), 'blanks dropped: 14 lines → 12 prompts');
+  assert.ok(await page.$eval('#deck-save-btn', el => !el.disabled), 'save enables at name + >= 10 prompts');
+  await page.click('#deck-save-btn');
+  await page.waitForSelector('#settings-sheet:not([hidden])');   // save lands back on the settings sheet
+
+  // Storage shape (DESIGN.md §8.1): { v:1, decks: { c<epoch36>: { name, prompts } } }.
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.decks')));
+  assert.strictEqual(stored.v, 1);
+  const ids = Object.keys(stored.decks);
+  assert.strictEqual(ids.length, 1, 'exactly one saved deck');
+  const deckId = ids[0];
+  assert.match(deckId, /^c[0-9a-z]+$/, 'generated id shape');
+  assert.deepStrictEqual(stored.decks[deckId], { name: NAME, prompts: expected },
+    'prompts saved trimmed, blank-dropped, 90-char-capped');
+
+  // The picker lists it (hostile name as literal text) alongside Classic, unselected.
+  assert.strictEqual(await text(page, `#seg-deck button[data-val="${deckId}"]`), NAME);
+  assert.strictEqual(await page.getAttribute('#seg-deck button[data-val="classic"]', 'aria-pressed'), 'true');
+
+  // Edit: the row's ✏️ pre-fills the editor; saving updates the SAME id in place.
+  assert.strictEqual(await page.$$eval('#deck-manage-list .deck-row', els => els.length), 1);
+  assert.strictEqual(await text(page, '#deck-manage-list .deck-row-name'), NAME);
+  await page.click('#deck-manage-list .deck-edit');
+  await page.waitForSelector('#deck-editor-sheet:not([hidden])');
+  assert.strictEqual(await text(page, '#deck-editor-title'), '✏️ Edit deck');
+  assert.strictEqual(await page.inputValue('#deck-name-input'), NAME, 'edit pre-fills the name');
+  assert.strictEqual(await page.inputValue('#deck-prompts-input'), expected.join('\n'), 'edit pre-fills the prompts');
+  await page.fill('#deck-name-input', NAME2);
+  await page.click('#deck-save-btn');
+  await page.waitForSelector('#settings-sheet:not([hidden])');
+  const stored2 = await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.decks')));
+  assert.deepStrictEqual(Object.keys(stored2.decks), [deckId], 'edit updates in place — no second deck');
+  assert.strictEqual(stored2.decks[deckId].name, NAME2);
+
+  // Select it and play a seeded 2-player game: every drawn prompt is from the custom deck.
+  await page.click(`#seg-deck button[data-val="${deckId}"]`);
+  assert.strictEqual(await page.getAttribute(`#seg-deck button[data-val="${deckId}"]`, 'aria-pressed'), 'true');
+  assert.strictEqual(await page.getAttribute('#seg-deck button[data-val="classic"]', 'aria-pressed'), 'false');
+  await page.click('#sheet-close');
+  await startGame(page, ['Ann', 'Ben']);
+  assert.strictEqual(await page.evaluate(() => window.__gonuts.getGame().settings.deckId), deckId,
+    'the frozen game snapshot carries the custom deck id');
+  const seen = [];
+  for (const stars of [[4], [3]]) {                  // 2 turns, 1 rater each; 4 vs 3 → unique winner
+    await page.waitForSelector('#intro-screen.active');
+    seen.push(await text(page, '#intro-prompt-text'));
+    await playTurn(page, stars);
+  }
+  await page.waitForSelector('#winner-screen.active');
+  assert.ok(seen.every(p => expected.includes(p)),
+    `every drawn prompt comes from the custom deck (got ${JSON.stringify(seen)})`);
+  assert.strictEqual(new Set(seen).size, seen.length, 'the custom drawPile never repeats either');
+
+  // Delete from the winner screen's sheet: the picker falls back to classic, settings.deckId
+  // clears, and the LAST per-deck delete removes gonuts.decks entirely — while the finished
+  // game's frozen settings snapshot keeps the dead id (per-game settings are immutable).
+  await page.click('#settings-btn');
+  await page.waitForSelector('#settings-sheet:not([hidden])');
+  await page.click('#deck-manage-list .deck-del');   // confirm() auto-accepted by the dialog handler
+  assert.strictEqual(await page.$(`#seg-deck button[data-val="${deckId}"]`), null, 'deleted deck leaves the picker');
+  assert.strictEqual(await page.getAttribute('#seg-deck button[data-val="classic"]', 'aria-pressed'), 'true',
+    'the picker falls back to classic');
+  assert.strictEqual(await page.evaluate(() => window.__gonuts.settings.deckId), 'classic');
+  assert.strictEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('gonuts.settings')).deckId), 'classic');
+  assert.strictEqual(await page.evaluate(() => localStorage.getItem('gonuts.decks')), null,
+    'the last per-deck delete clears the key');
+  assert.strictEqual(await page.evaluate(() => window.__gonuts.getGame().settings.deckId), deckId,
+    "the finished game's frozen settings are untouched by the delete");
+});
+
 // ---------- runner ----------
 (async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
