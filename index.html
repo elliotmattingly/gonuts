@@ -1285,7 +1285,66 @@
       nutoff:  () => [392, 392, 392, 311].forEach((f, i) => tone(f, 0.14, { at: i * 0.16 })),  // tie! (played by enterNutoff)
       fanfare: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, { at: i * 0.13, type: 'triangle' })),  // winner
     };
-    return { play(name, arg) { CUES[name]?.(arg); }, unlock: ensure };
+    // ---- turn music: a manic 150 BPM chiptune loop, only while performing ----
+    // Scheduled ahead in small windows off repaintRing's existing interval (no new
+    // timers, so the registry invariant and the performing state's handle count are
+    // untouched). Notes route through a per-turn gain node so transition() can cut
+    // the already-scheduled tail instantly. Same mute rule as tone(): the
+    // settings.sound check gates each scheduled note; the grid keeps advancing, so
+    // the corner 🔇 mutes/unmutes mid-turn without desyncing the loop.
+    const MUSIC = {
+      STEP: 0.2,                      // 150 BPM eighth notes
+      LOOKAHEAD: 0.45,                // schedule ~2 steps ahead of the 200ms repaint cadence
+      bass: [131, 131, 196, 131, 175, 175, 262, 175, 196, 196, 294, 196, 131, 196, 262, 196],  // C-F-G-C, square
+      lead: [330, 392, 523, 0, 523, 440, 349, 0, 494, 392, 587, 0, 523, 392, 330, 262],        // pentatonic riff, triangle, 0 = rest
+    };
+    const mus = { on: false, step: 0, next: 0, out: null };
+    function musicNote(c, freq, t, dur, type, gain) {
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t);
+      g.gain.setValueAtTime(gain, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(mus.out);
+      o.start(t); o.stop(t + dur + 0.05);
+    }
+    const music = {
+      start() {
+        const c = ensure(); if (!c) return;
+        this.stop();                             // never two loops (e.g. resumed turn)
+        mus.out = c.createGain();
+        mus.out.gain.setValueAtTime(1, c.currentTime);
+        mus.out.connect(c.destination);
+        mus.step = 0;
+        mus.next = c.currentTime + 0.1;
+        mus.on = true;
+      },
+      tick() {                                   // called from repaintRing while performing
+        if (!mus.on) return;
+        const c = ensure(); if (!c || c.state !== 'running') return;
+        if (mus.next < c.currentTime) mus.next = c.currentTime + 0.05;  // throttled tab: skip ahead, no stale-note burst
+        while (mus.next < c.currentTime + MUSIC.LOOKAHEAD) {
+          if (settings.sound) {
+            musicNote(c, MUSIC.bass[mus.step], mus.next, 0.18, 'square', 0.045);
+            const lf = MUSIC.lead[mus.step];
+            if (lf) musicNote(c, lf, mus.next, 0.15, 'triangle', 0.035);
+          }
+          mus.next += MUSIC.STEP;
+          mus.step = (mus.step + 1) % MUSIC.bass.length;
+        }
+      },
+      stop() {                                   // instant-silence the loop incl. its scheduled tail
+        mus.on = false;
+        if (mus.out) {
+          try {
+            mus.out.gain.cancelScheduledValues(0);
+            mus.out.gain.setValueAtTime(0, 0);
+            mus.out.disconnect();
+          } catch {}
+          mus.out = null;
+        }
+      },
+    };
+    return { play(name, arg) { CUES[name]?.(arg); }, unlock: ensure, music };
   })();
   const haptics = { buzz(p) { try { if (settings.haptics) navigator.vibrate?.(p); } catch {} } };
   document.addEventListener('pointerdown', () => audio.unlock(), { once: true }); /* raw-timer-ok: permanent listener */
@@ -1599,6 +1658,7 @@
     }
     timers.clearAll();                     // no timer/listener/rAF survives a transition
     wakeLock.sync(to);                     // hold the screen awake during live-game states (DESIGN.md §3)
+    audio.music.stop();                    // the turn loop never outlives a transition (enterPerforming restarts it)
     machine.state = to;
     show(STATES[to].screen);               // the ONLY call site of show()
     STATES[to].enter(payload);
@@ -1806,6 +1866,7 @@
     run.turnEndsAt  = Date.now() + run.turnTotalMs;
     run.lastWholeSecond = turnSecondsForCurrentTurn() + 1;
     $('ring-live').textContent = '';       // fresh turn: clear the stale last announcement
+    audio.music.start();                                    // manic turn loop, cut by the next transition()
     repaintRing(); cycleWord();
     timers.every(CONFIG.REPAINT_MS, repaintRing);
     timers.every(wordCycleMs(), cycleWord);
@@ -1817,6 +1878,7 @@
   }
 
   function repaintRing() {                 // replaces tick() + updateRing()
+    audio.music.tick();                    // keep the turn loop scheduled ahead (no extra timer)
     const msLeft = Math.max(0, run.turnEndsAt - Date.now());
     const secs = Math.ceil(msLeft / 1000);
     $('ring-num').textContent = secs;

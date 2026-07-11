@@ -1253,6 +1253,44 @@ scenario('S17 team mode: rater exclusion, team totals, team crown; 2v2 all-tie �
     ['🔴 Red Team (Ann, Cara)', '🔵 Blue Team (Ben, Dan)'], 'both co-winner teams enter the HOF');
 });
 
+
+// S18 — Turn music (follow-up): a chiptune loop plays ONLY while performing. It is
+// scheduled off repaintRing's existing interval (no extra registry timers — S3's
+// handle-count pin still holds) and every note is gated by settings.sound, so a
+// muted turn schedules ZERO oscillators (cues included — tone() shares the gate).
+// We instrument OscillatorNode.start: the 3-2-1-GO countdown fires exactly 5
+// one-shot cue oscillators; the loop then streams notes for the whole turn.
+scenario('S18 turn music plays while performing and fully mutes', async ({ page, base }) => {
+  await page.addInitScript(() => {
+    window.__oscStarts = 0;
+    const orig = OscillatorNode.prototype.start;
+    OscillatorNode.prototype.start = function (...a) { window.__oscStarts++; return orig.apply(this, a); };
+  });
+  await page.goto(base + Q);
+  await startGame(page, ['Ann', 'Ben']);
+  const osc = () => page.evaluate(() => window.__oscStarts);
+
+  // Turn 1, sound on: countdown cues + a steady loop stream + urgent ticks + buzzer.
+  await playTurn(page, [4]);
+  const afterTurn1 = await osc();
+  // 2s turn at 0.2s steps = ~10 steps x (bass + ~3/4 lead) plus 5 countdown cues,
+  // 2 urgent ticks and the buzzer — anything under 15 means the loop never ran.
+  assert.ok(afterTurn1 >= 15, `expected a music stream, got only ${afterTurn1} oscillator starts`);
+
+  // The loop must not outlive the turn: parked on intro, no new notes appear.
+  await page.waitForSelector('#intro-screen.active');
+  const parked = await osc();
+  await new Promise(r => setTimeout(r, 700)); /* raw-timer-ok: node-side test harness */
+  assert.strictEqual(await osc(), parked, 'oscillators kept starting after the turn ended');
+
+  // Turn 2 muted via the corner toggle: zero oscillators, loop included.
+  await page.click('#sound-btn');
+  assert.strictEqual(await page.evaluate(() => window.__gonuts.settings.sound), false);
+  const beforeMuted = await osc();
+  await playTurn(page, [4]);
+  assert.strictEqual(await osc(), beforeMuted, 'muted turn must schedule no oscillators');
+});
+
 // ---------- runner ----------
 (async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
